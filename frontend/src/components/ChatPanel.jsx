@@ -124,7 +124,7 @@ export default function ChatPanel({ controls }) {
                 <MetaTag label="model" value={result.model} />
                 {result.trace_id && (
                   <a
-                    href={process.env.REACT_APP_LANGFUSE_URL || "https://us.cloud.langfuse.com"}
+                    href={`${process.env.REACT_APP_LANGFUSE_URL || "https://us.cloud.langfuse.com"}/trace/${result.trace_id}`}
                     target="_blank"
                     rel="noreferrer"
                     data-testid="langfuse-trace-link"

@@ -4,7 +4,7 @@
  */
 import React from "react";
 
-const RE = /\[chunk\s+([\d,\s]+)\]/gi;
+const RE = /\[chunk\s+([\d,\s]+)\]|\[(\d+(?:\s*,\s*\d+)*)\]/gi;
 
 export default function CitedText({ text, activeChunk, setActiveChunk }) {
   if (!text) return null;
@@ -15,7 +15,8 @@ export default function CitedText({ text, activeChunk, setActiveChunk }) {
   RE.lastIndex = 0;
   while ((m = RE.exec(text)) !== null) {
     if (m.index > last) parts.push({ kind: "text", value: text.slice(last, m.index) });
-    const nums = m[1]
+    const digits = m[1] || m[2] || "";
+    const nums = digits
       .split(",")
       .map((s) => parseInt(s.trim(), 10))
       .filter((n) => !Number.isNaN(n));

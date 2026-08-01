@@ -73,7 +73,7 @@ export default function HistoryPanel() {
                   <td className="py-3 text-right">
                     {c.trace_id ? (
                       <a
-                        href={process.env.REACT_APP_LANGFUSE_URL || "https://us.cloud.langfuse.com"}
+                        href={`${process.env.REACT_APP_LANGFUSE_URL || "https://us.cloud.langfuse.com"}/trace/${c.trace_id}`}
                         target="_blank"
                         rel="noreferrer"
                         className="font-mono text-[10px] uppercase tracking-widest px-2 py-1 border border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors"
