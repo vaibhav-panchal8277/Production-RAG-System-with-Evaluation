@@ -1,0 +1,15 @@
+# Common
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+node_modules
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.venv
+.DS_Store
+build
+dist
