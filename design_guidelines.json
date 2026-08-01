@@ -1,0 +1,136 @@
+{
+  "project_name": "RAG Evaluation Lab",
+  "theme_mode": "dark",
+  "design_archetype": "Swiss Brutalism meets Technical Lab",
+  "emotion_target": "Precise, Objective, Scientific, Data-Dense",
+  "typography": {
+    "fonts": {
+      "headings": "'Chivo', sans-serif",
+      "body": "'IBM Plex Sans', sans-serif",
+      "mono": "'JetBrains Mono', monospace"
+    },
+    "hierarchy": {
+      "h1": "text-4xl font-black tracking-tighter leading-none text-white",
+      "h2": "text-2xl font-bold tracking-tight text-white",
+      "h3": "text-xl font-semibold tracking-tight text-neutral-200",
+      "h4": "text-sm font-bold uppercase tracking-[0.2em] text-neutral-400",
+      "body": "text-sm leading-relaxed text-neutral-300",
+      "data": "text-sm font-mono text-neutral-200",
+      "small_label": "text-xs font-mono uppercase tracking-[0.1em] text-neutral-500"
+    },
+    "rules": [
+      "Never use Inter for headings.",
+      "Metrics and scores MUST use JetBrains Mono to ensure tabular lining.",
+      "Section headers must be uppercase with wide tracking.",
+      "Labels (like 'top-k', 'hybrid') must be monospace text-xs."
+    ]
+  },
+  "colors": {
+    "background": {
+      "app": "#0A0A0C",
+      "panel": "#111114",
+      "surface": "#18181C",
+      "surface_hover": "#222228"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A1A1AA",
+      "tertiary": "#71717A",
+      "inverse": "#000000"
+    },
+    "border": {
+      "default": "rgba(255, 255, 255, 0.1)",
+      "focus": "rgba(255, 255, 255, 0.3)"
+    },
+    "signals": {
+      "success": "#22C55E",
+      "warning": "#EAB308",
+      "error": "#EF4444",
+      "info": "#3B82F6"
+    },
+    "brand": {
+      "primary": "#FFFFFF",
+      "primary_hover": "#E4E4E7"
+    },
+    "rules": [
+      "DO NOT use generic purple gradients. FORBIDDEN COLOR: #7351B7.",
+      "DO NOT use completely transparent backgrounds for headers, dialogs, or dropdowns. Use solid dark colors with 1px borders.",
+      "Signal colors (green/yellow/red) should be used purely for metrics (Faithfulness, Precision) and must have high contrast against #0A0A0C."
+    ]
+  },
+  "layouts": {
+    "global": {
+      "structure": "Grid-based. 250px fixed sidebar on left, 1fr main content area on right.",
+      "spacing": "Tight padding (p-4 or p-6) to maximize data density.",
+      "borders": "Expose the skeleton. Use 1px borders (border-white/10) to separate all major panels."
+    },
+    "panels": {
+      "Chat": "Two-column bento layout: Left column (60%) for conversational UI. Right column (40%) for retrieved context chunks side-by-side.",
+      "Evaluation_Dashboard": "Top row: 3 big metric cards (grid-cols-3). Middle row: Line chart spanning full width. Bottom: Data table for per-question analysis.",
+      "Documents": "Full width dense data table with monospace stats (n_chunks, updated_at).",
+      "Sidebar": "Dense vertical stack. Must include real-time health stats, radio group for retrieval mode, and slider for top-k."
+    },
+    "rules": [
+      "Use 'Grid Borders' pattern: Items should have right and bottom borders to create a technical table-like feel.",
+      "No rounded, soft floating cards. Use rounded-none or rounded-sm max.",
+      "Always align numbers and metrics to the right."
+    ]
+  },
+  "components": {
+    "citations": {
+      "style": "Inline markers [1], [2]. text-xs font-mono bg-white/10 text-white px-1 rounded-sm cursor-pointer border border-white/20 transition-colors",
+      "hover_state": "bg-white text-black font-bold",
+      "interaction": "Hovering a citation MUST highlight the corresponding context chunk in the right panel."
+    },
+    "context_chunks": {
+      "style": "border border-white/10 bg-[#111114] p-3 text-sm",
+      "header": "Flex row, source name + score (mono, color-coded)",
+      "body": "text-neutral-400 leading-relaxed max-h-48 overflow-y-auto custom-scrollbar"
+    },
+    "metric_cards": {
+      "style": "border border-white/10 bg-[#111114] p-6 flex flex-col gap-2",
+      "value": "text-5xl font-mono text-white",
+      "label": "text-sm font-bold uppercase tracking-wider text-neutral-500"
+    },
+    "controls": {
+      "sliders": "Thin 2px tracks, sharp square thumbs.",
+      "radios": "Square radio buttons or segmented control with sharp edges."
+    },
+    "tables": {
+      "style": "w-full text-sm text-left",
+      "header": "border-b border-white/10 text-xs font-mono uppercase text-neutral-500 pb-2",
+      "row": "border-b border-white/5 hover:bg-white/[0.02]"
+    }
+  },
+  "visual_enhancers": {
+    "textures": "Subtle noise overlay (opacity-20) over the main background to kill digital flatness.",
+    "badges": "Langfuse trace badges should look like terminal tags: border border-blue-500/30 bg-blue-500/10 text-blue-400 text-xs font-mono px-2 py-0.5.",
+    "scrollbars": "MUST be customized. Width 4px, thumb bg-white/20, track transparent."
+  },
+  "motion": {
+    "micro_interactions": "Hover states on citations and table rows must be snappy (150ms).",
+    "transitions": "Use transition-colors for hover states. Do NOT use transition-all.",
+    "charts": "Recharts should have minimal entrance animations, prioritizing immediate data rendering."
+  },
+  "accessibility": {
+    "contrast": "Text over backgrounds MUST meet APCA guidelines. Use text-white over dark panels.",
+    "focus": "focus:ring-1 focus:ring-white focus:outline-none focus:border-white",
+    "aria": "Use aria-hidden for decorative borders and grid lines."
+  },
+  "instructions_to_main_agent": {
+    "1": "Use Shadcn UI extensively (Tabs, Slider, Radio Group, Table), but override their soft rounded styles with border-radius: 0 or rounded-sm, and replace default grays with the custom dark palette.",
+    "2": "For the Eval Dashboard line chart, use `recharts` with a dark theme configuration (grid lines border-white/10, tooltips dark background with solid borders).",
+    "3": "Implement the Chat panel with a dual-pane view: messages on left, retrieved chunks on right. Connect inline citations to chunks visually.",
+    "4": "The Sidebar must feel like a lab control panel. Prominent Top-K slider and hybrid/dense/keyword toggle.",
+    "5": "Do NOT center the layout. Everything must be left-aligned or grid-aligned to maintain the scientific dashboard structure."
+  },
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. Avoid this.",
+    "DO NOT use dark colors as gradients. Stick to solid dark backgrounds.",
+    "DO NOT apply universal transition (transition: all). Use specific properties.",
+    "NEVER center align the app container (.App { text-align: center; } is banned).",
+    "Every interaction needs a micro-animation (hover state, focus ring).",
+    "All interactive elements MUST include a data-testid attribute in kebab-case based on role (e.g., data-testid='top-k-slider').",
+    "Use sonner for toast notifications. Ensure the toast background is dark and not transparent."
+  ]
+}
