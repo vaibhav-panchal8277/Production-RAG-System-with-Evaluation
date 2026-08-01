@@ -1,56 +1,43 @@
-import { useEffect } from "react";
+import React, { useState } from "react";
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
-import { HOME } from "@/constants/testIds";
+import { Toaster } from "@/components/ui/sonner";
+import Sidebar from "@/components/Sidebar";
+import ChatPanel from "@/components/ChatPanel";
+import DocumentsPanel from "@/components/DocumentsPanel";
+import EvalDashboard from "@/components/EvalDashboard";
+import HistoryPanel from "@/components/HistoryPanel";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
-
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
+export default function App() {
+  const [active, setActive] = useState("chat");
+  const [controls, setControls] = useState({ mode: "hybrid", topK: 5 });
 
   return (
-    <div>
-      <header className="App-header">
-        <a
-          data-testid={HOME.emergentLink}
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
-};
-
-function App() {
-  return (
-    <div className="App">
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
+    <div className="min-h-screen bg-[#0a0a0c] text-white noise-bg relative">
+      <Sidebar
+        active={active}
+        setActive={setActive}
+        controls={controls}
+        setControls={setControls}
+      />
+      <main className="ml-[260px] relative z-[1]" data-testid="main-content">
+        {active === "chat" && <ChatPanel controls={controls} />}
+        {active === "docs" && <DocumentsPanel />}
+        {active === "eval" && <EvalDashboard />}
+        {active === "history" && <HistoryPanel />}
+      </main>
+      <Toaster
+        position="bottom-right"
+        toastOptions={{
+          style: {
+            background: "#111114",
+            border: "1px solid rgba(255,255,255,0.15)",
+            color: "#fff",
+            borderRadius: 0,
+            fontFamily: "JetBrains Mono, monospace",
+            fontSize: 12,
+          },
+        }}
+      />
     </div>
   );
 }
-
-export default App;

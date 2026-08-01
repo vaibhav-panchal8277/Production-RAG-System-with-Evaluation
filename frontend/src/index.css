@@ -1,115 +1,180 @@
+@import url("https://fonts.googleapis.com/css2?family=Chivo:wght@400;700;900&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
-    margin: 0;
-    font-family:
-        -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
-        "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
-        sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-}
-
-code {
-    font-family:
-        source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
+:root {
+    --bg-app: #0a0a0c;
+    --bg-panel: #111114;
+    --bg-surface: #18181c;
+    --bg-hover: #222228;
+    --border: rgba(255, 255, 255, 0.1);
+    --border-strong: rgba(255, 255, 255, 0.22);
+    --text-primary: #ffffff;
+    --text-secondary: #a1a1aa;
+    --text-tertiary: #71717a;
+    --signal-success: #22c55e;
+    --signal-warning: #eab308;
+    --signal-error: #ef4444;
+    --signal-info: #3b82f6;
 }
 
 @layer base {
     :root {
-        --background: 0 0% 100%;
-        --foreground: 0 0% 3.9%;
-        --card: 0 0% 100%;
-        --card-foreground: 0 0% 3.9%;
-        --popover: 0 0% 100%;
-        --popover-foreground: 0 0% 3.9%;
-        --primary: 0 0% 9%;
-        --primary-foreground: 0 0% 98%;
-        --secondary: 0 0% 96.1%;
-        --secondary-foreground: 0 0% 9%;
-        --muted: 0 0% 96.1%;
-        --muted-foreground: 0 0% 45.1%;
-        --accent: 0 0% 96.1%;
-        --accent-foreground: 0 0% 9%;
-        --destructive: 0 84.2% 60.2%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 89.8%;
-        --input: 0 0% 89.8%;
-        --ring: 0 0% 3.9%;
-        --chart-1: 12 76% 61%;
-        --chart-2: 173 58% 39%;
-        --chart-3: 197 37% 24%;
-        --chart-4: 43 74% 66%;
-        --chart-5: 27 87% 67%;
-        --radius: 0.5rem;
-    }
-    .dark {
-        --background: 0 0% 3.9%;
-        --foreground: 0 0% 98%;
-        --card: 0 0% 3.9%;
-        --card-foreground: 0 0% 98%;
-        --popover: 0 0% 3.9%;
-        --popover-foreground: 0 0% 98%;
-        --primary: 0 0% 98%;
-        --primary-foreground: 0 0% 9%;
-        --secondary: 0 0% 14.9%;
-        --secondary-foreground: 0 0% 98%;
-        --muted: 0 0% 14.9%;
-        --muted-foreground: 0 0% 63.9%;
-        --accent: 0 0% 14.9%;
-        --accent-foreground: 0 0% 98%;
-        --destructive: 0 62.8% 30.6%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 14.9%;
-        --input: 0 0% 14.9%;
-        --ring: 0 0% 83.1%;
-        --chart-1: 220 70% 50%;
-        --chart-2: 160 60% 45%;
-        --chart-3: 30 80% 55%;
-        --chart-4: 280 65% 60%;
-        --chart-5: 340 75% 55%;
+        --background: 240 6% 4%;
+        --foreground: 0 0% 100%;
+        --card: 240 6% 7%;
+        --card-foreground: 0 0% 100%;
+        --popover: 240 6% 8%;
+        --popover-foreground: 0 0% 100%;
+        --primary: 0 0% 100%;
+        --primary-foreground: 0 0% 0%;
+        --secondary: 240 4% 12%;
+        --secondary-foreground: 0 0% 100%;
+        --muted: 240 4% 12%;
+        --muted-foreground: 240 5% 65%;
+        --accent: 240 4% 14%;
+        --accent-foreground: 0 0% 100%;
+        --destructive: 0 84% 60%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 240 4% 16%;
+        --input: 240 4% 14%;
+        --ring: 0 0% 100%;
+        --radius: 0.125rem;
     }
 }
 
-@layer base {
-    * {
-        @apply border-border;
-    }
-    body {
-        @apply bg-background text-foreground;
-    }
+* {
+    box-sizing: border-box;
 }
 
-@layer base {
-    [data-debug-wrapper="true"] {
-        display: contents !important;
-    }
+html,
+body,
+#root {
+    margin: 0;
+    padding: 0;
+    background: var(--bg-app);
+    color: var(--text-primary);
+    font-family:
+        "IBM Plex Sans",
+        ui-sans-serif,
+        system-ui,
+        sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+}
 
-    [data-debug-wrapper="true"] > * {
-        margin-left: inherit;
-        margin-right: inherit;
-        margin-top: inherit;
-        margin-bottom: inherit;
-        padding-left: inherit;
-        padding-right: inherit;
-        padding-top: inherit;
-        padding-bottom: inherit;
-        column-gap: inherit;
-        row-gap: inherit;
-        gap: inherit;
-        border-left-width: inherit;
-        border-right-width: inherit;
-        border-top-width: inherit;
-        border-bottom-width: inherit;
-        border-left-style: inherit;
-        border-right-style: inherit;
-        border-top-style: inherit;
-        border-bottom-style: inherit;
-        border-left-color: inherit;
-        border-right-color: inherit;
-        border-top-color: inherit;
-        border-bottom-color: inherit;
-    }
+.font-heading {
+    font-family: "Chivo", ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: -0.02em;
+}
+.font-mono {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-feature-settings: "tnum" 1;
+}
+.font-body {
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Noise texture overlay */
+.noise-bg::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    background-repeat: repeat;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
+
+/* Selection */
+::selection {
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+}
+
+/* Slider — sharp square thumb */
+.slider-sharp [data-orientation="horizontal"] {
+    height: 2px;
+}
+
+/* Citation marker */
+.citation-marker {
+    display: inline-block;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    line-height: 1;
+    padding: 3px 6px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 2px;
+    cursor: pointer;
+    margin: 0 2px;
+    vertical-align: baseline;
+    transition:
+        background-color 150ms ease,
+        color 150ms ease,
+        border-color 150ms ease;
+}
+.citation-marker:hover,
+.citation-marker.active {
+    background: #ffffff;
+    color: #000;
+    border-color: #ffffff;
+    font-weight: 700;
+}
+
+/* Chunk card highlight sync w/ citation */
+.chunk-card.highlight {
+    border-color: #ffffff;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+/* Blinking status dot */
+.status-dot {
+    width: 8px;
+    height: 8px;
+    display: inline-block;
+    border-radius: 999px;
+    background: var(--signal-success);
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.5);
+}
+.status-dot.warn {
+    background: var(--signal-warning);
+    box-shadow: 0 0 8px rgba(234, 179, 8, 0.4);
+}
+.status-dot.err {
+    background: var(--signal-error);
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
+}
+
+/* Grid dividers */
+.grid-borders > * + * {
+    border-left: 1px solid var(--border);
+}
+
+/* Utility: no-focus-outline */
+button:focus-visible,
+[role="button"]:focus-visible {
+    outline: 1px solid rgba(255, 255, 255, 0.35);
+    outline-offset: 2px;
 }
