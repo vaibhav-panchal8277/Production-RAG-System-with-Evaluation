@@ -36,10 +36,12 @@ const scoreColor = (v) => {
 
 export default function EvalDashboard() {
   const [scope, setScope] = useState("testset");
-  const [limit, setLimit] = useState(8);
+  const [limit, setLimit] = useState(45);
   const [latest, setLatest] = useState(null);
   const qc = useQueryClient();
 
+  const testsetQ = useQuery({ queryKey: ["testset"], queryFn: api.testset });
+  const testsetSize = testsetQ.data?.testset?.length ?? 45;
   const runs = useQuery({ queryKey: ["evals"], queryFn: () => api.listEvals(30) });
 
   const runEval = useMutation({
@@ -96,7 +98,7 @@ export default function EvalDashboard() {
             </SelectTrigger>
             <SelectContent className="bg-[#111114] border-white/10 text-white">
               <SelectItem value="testset" data-testid="scope-testset">
-                Golden test-set (8 Q&amp;A)
+                Golden test-set ({testsetSize} Q&amp;A)
               </SelectItem>
               <SelectItem value="recent" data-testid="scope-recent">
                 Recent user queries

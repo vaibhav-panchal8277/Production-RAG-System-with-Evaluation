@@ -154,7 +154,7 @@ class TestTestset:
         r = s.get(f"{BASE_URL}/api/testset", timeout=30)
         assert r.status_code == 200
         ts = r.json()["testset"]
-        assert len(ts) == 8, f"expected 8 items, got {len(ts)}"
+        assert len(ts) == 45, f"expected 45 items, got {len(ts)}"
         for row in ts:
             for k in ("question", "reference", "expected_source"):
                 assert k in row and row[k], f"missing {k}: {row}"
