@@ -277,3 +277,7 @@ async def run_evaluation(body: EvalRunIn):
 async def list_evaluations(limit: int = 30):
     runs = await db.eval_runs.find({}, {"_id": 0, "per_row": 0}).sort("created_at", -1).to_list(limit)
     return {"runs": runs}
+
+
+app.include_router(api)
+
