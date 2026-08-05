@@ -12,7 +12,7 @@ Covers:
 """
 import os
 import time
-import uuid
+
 import pytest
 import requests
 
@@ -157,7 +157,7 @@ class TestTestset:
         assert len(ts) == 45, f"expected 45 items, got {len(ts)}"
         for row in ts:
             for k in ("question", "reference", "expected_source"):
-                assert k in row and row[k], f"missing {k}: {row}"
+                assert row.get(k), f"missing {k}: {row}"
 
 
 # ---------- evaluation ----------

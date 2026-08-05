@@ -1,9 +1,10 @@
 """Central factory for LLM (Emergent proxy) + local HuggingFace embeddings."""
 import os
 from functools import lru_cache
-from openai import OpenAI
-from langchain_openai import ChatOpenAI
+
 from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_openai import ChatOpenAI
+from openai import OpenAI
 from sentence_transformers import SentenceTransformer
 
 EMERGENT_KEY = os.environ["EMERGENT_LLM_KEY"]

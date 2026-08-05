@@ -1,5 +1,5 @@
 """Grounded answer generation with strict citations."""
-from rag.llm_client import get_openai, LLM_MODEL
+from rag.llm_client import LLM_MODEL, get_openai
 
 SYSTEM_PROMPT = """You are a Retrieval-Augmented QA assistant answering questions about internal policy and technical documentation.
 

@@ -1,16 +1,20 @@
 """Document ingestion: parse -> chunk -> embed -> upsert -> rebuild BM25."""
 import io
+import logging
 from datetime import datetime, timezone
-from typing import Optional
+
 from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 from rag.chunker import split_text
 from rag.vector_store import (
-    upsert_chunks,
     delete_by_ids,
-    rebuild_bm25,
     make_chunk_id,
+    rebuild_bm25,
+    upsert_chunks,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def parse_pdf(file_bytes: bytes) -> str:
@@ -19,7 +23,8 @@ def parse_pdf(file_bytes: bytes) -> str:
     for i, page in enumerate(reader.pages):
         try:
             t = page.extract_text() or ""
-        except Exception:
+        except (PdfReadError, AttributeError, TypeError) as e:
+            logger.warning("PDF page %d text extraction failed: %s", i, e)
             t = ""
         if t.strip():
             parts.append(t)
@@ -30,12 +35,20 @@ def parse_markdown(file_bytes: bytes) -> str:
     return file_bytes.decode("utf-8", errors="ignore")
 
 
+def _guess_section(chunk_text: str) -> str:
+    lines = [l.strip() for l in chunk_text.split("\n") if l.strip()]
+    for l in lines:
+        if l.startswith("#") or (len(l) < 60 and not l.endswith(".")):
+            return l.lstrip("#").strip()
+    return "General"
+
+
 async def ingest_document(
     db,
     source: str,
     content_bytes: bytes,
     content_type: str,
-    title: Optional[str] = None,
+    title: str | None = None,
 ) -> dict:
     if content_type == "application/pdf" or source.lower().endswith(".pdf"):
         text = parse_pdf(content_bytes)
@@ -59,35 +72,38 @@ async def ingest_document(
                 "text": ch,
                 "metadata": {
                     "source": source,
-                    "chunk_index": i,
+                    "title": title or source,
                     "section": section,
                     "kind": kind,
                 },
             }
         )
 
-    # Store in Mongo (for BM25 corpus + traceability)
-    existing_ids = [d["_id"] async for d in db.chunks.find({"source": source}, {"_id": 1})]
-    await db.chunks.delete_many({"source": source})
-    docs = [
+    # Remove old chunks for this source if any
+    old_chunks = await db.chunks.find({"source": source}, {"id": 1}).to_list(2000)
+    if old_chunks:
+        old_ids = [c["id"] for c in old_chunks]
+        delete_by_ids(old_ids)
+        await db.chunks.delete_many({"source": source})
+
+    # Upsert new chunks to vector store
+    upsert_chunks(chunk_records)
+
+    # Save to MongoDB chunks
+    db_records = [
         {
-            "_id": c["id"],
+            "id": c["id"],
             "source": source,
-            "chunk_index": c["metadata"]["chunk_index"],
-            "section": c["metadata"]["section"],
             "text": c["text"],
-            "kind": kind,
+            "metadata": c["metadata"],
         }
         for c in chunk_records
     ]
-    if docs:
-        await db.chunks.insert_many(docs)
+    if db_records:
+        await db.chunks.insert_many(db_records)
 
-    # Push to Pinecone
-    delete_by_ids(existing_ids)
-    upsert_chunks(chunk_records)
-
-    # Track document
+    # Upsert document summary
+    now = datetime.now(timezone.utc).isoformat()
     await db.documents.update_one(
         {"source": source},
         {
@@ -96,27 +112,23 @@ async def ingest_document(
                 "title": title or source,
                 "kind": kind,
                 "n_chunks": len(chunk_records),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": now,
             }
         },
         upsert=True,
     )
 
-    # Rebuild BM25 index from all chunks
+    # Rebuild BM25 index from all documents in db
     await rebuild_bm25_from_db(db)
 
-    return {"source": source, "n_chunks": len(chunk_records), "kind": kind}
+    return {
+        "source": source,
+        "title": title or source,
+        "kind": kind,
+        "n_chunks": len(chunk_records),
+    }
 
 
 async def rebuild_bm25_from_db(db):
-    cursor = db.chunks.find({}, {"_id": 1, "text": 1})
-    records = [{"id": d["_id"], "text": d["text"]} async for d in cursor]
-    rebuild_bm25(records)
-
-
-def _guess_section(chunk: str) -> str:
-    for line in chunk.split("\n")[:3]:
-        line = line.strip()
-        if line.startswith("#"):
-            return line.lstrip("#").strip()[:80]
-    return ""
+    all_chunks = await db.chunks.find({}, {"_id": 0, "id": 1, "text": 1}).to_list(10000)
+    rebuild_bm25(all_chunks)

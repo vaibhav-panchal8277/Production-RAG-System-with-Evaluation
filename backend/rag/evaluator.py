@@ -1,51 +1,67 @@
 """RAGAS evaluation wrapper — Faithfulness, Context Precision, Answer Relevancy."""
+import asyncio
+import logging
+import math
+
 from datasets import Dataset
 from ragas import evaluate
+from ragas.embeddings import LangchainEmbeddingsWrapper
+from ragas.llms import LangchainLLMWrapper
 from ragas.metrics import (
     Faithfulness,
-    ResponseRelevancy,
     LLMContextPrecisionWithoutReference,
+    ResponseRelevancy,
 )
-from ragas.llms import LangchainLLMWrapper
-from ragas.embeddings import LangchainEmbeddingsWrapper
 
 from rag.llm_client import get_chat_llm, get_embeddings
 
-
-def _wrappers():
-    return (
-        LangchainLLMWrapper(get_chat_llm()),
-        LangchainEmbeddingsWrapper(get_embeddings()),
-    )
+logger = logging.getLogger(__name__)
 
 
-def evaluate_conversations(rows: list[dict]) -> list[dict]:
-    """rows: [{query, answer, contexts:[str,...]}, ...] -> per-row metric dicts."""
+async def evaluate_conversations(rows: list[dict]) -> list[dict]:
+    """rows = [{'query':..., 'answer':..., 'contexts':[...]}, ...]"""
     if not rows:
         return []
-    llm_w, emb_w = _wrappers()
-    ds = Dataset.from_list(
-        [
+
+    eval_dataset = []
+    for r in rows:
+        eval_dataset.append(
             {
                 "user_input": r["query"],
                 "response": r["answer"],
-                "retrieved_contexts": r["contexts"] or [""],
+                "retrieved_contexts": [c["text"] for c in r.get("contexts", [])],
+            }
+        )
+
+    ds = Dataset.from_list(eval_dataset)
+    llm = LangchainLLMWrapper(get_chat_llm())
+    embeddings = LangchainEmbeddingsWrapper(get_embeddings())
+
+    metrics = [
+        Faithfulness(llm=llm),
+        ResponseRelevancy(llm=llm, embeddings=embeddings),
+        LLMContextPrecisionWithoutReference(llm=llm),
+    ]
+
+    try:
+        result = await asyncio.to_thread(
+            evaluate, dataset=ds, metrics=metrics, llm=llm, embeddings=embeddings
+        )
+        df = result.to_pandas()
+    except (RuntimeError, ValueError, TypeError) as e:
+        logger.error("RAGAS evaluation failed: %s", e)
+        # Return base rows with None scores if evaluation fails
+        return [
+            {
+                "query": r["query"],
+                "answer": r["answer"],
+                "faithfulness": None,
+                "answer_relevancy": None,
+                "context_precision": None,
             }
             for r in rows
         ]
-    )
-    result = evaluate(
-        ds,
-        metrics=[
-            Faithfulness(),
-            ResponseRelevancy(),
-            LLMContextPrecisionWithoutReference(),
-        ],
-        llm=llm_w,
-        embeddings=emb_w,
-        show_progress=False,
-    )
-    df = result.to_pandas()
+
     out = []
     for i, r in enumerate(rows):
         row = df.iloc[i]
@@ -64,8 +80,8 @@ def evaluate_conversations(rows: list[dict]) -> list[dict]:
 def _safe_float(v):
     try:
         f = float(v)
-        if f != f:  # NaN
+        if math.isnan(f):
             return None
         return round(f, 4)
-    except Exception:
+    except (ValueError, TypeError):
         return None

@@ -1,10 +1,13 @@
 """Langfuse tracing wrapper — degrades gracefully if not configured."""
+import logging
 import os
 from functools import lru_cache
 
+logger = logging.getLogger(__name__)
+
 try:
     from langfuse import Langfuse
-except Exception:
+except ImportError:
     Langfuse = None  # type: ignore
 
 
@@ -19,7 +22,8 @@ def get_langfuse():
         return None
     try:
         return Langfuse(public_key=pk, secret_key=sk, host=host)
-    except Exception:
+    except (ValueError, RuntimeError, ConnectionError) as e:
+        logger.warning("Failed to initialize Langfuse client: %s", e)
         return None
 
 
@@ -47,7 +51,8 @@ def trace_rag(query: str, contexts: list[dict], answer: str, model: str, latency
         )
         lf.flush()
         return trace.id
-    except Exception:
+    except (RuntimeError, ConnectionError) as e:
+        logger.debug("Langfuse trace failed: %s", e)
         return None
 
 
@@ -58,5 +63,5 @@ def score_trace(trace_id: str, name: str, value: float, comment: str = ""):
     try:
         lf.score(trace_id=trace_id, name=name, value=float(value), comment=comment)
         lf.flush()
-    except Exception:
-        pass
+    except (RuntimeError, ConnectionError) as e:
+        logger.debug("Langfuse score failed for trace %s: %s", trace_id, e)

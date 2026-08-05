@@ -1,12 +1,20 @@
 """Pinecone client + hybrid dense/BM25 retriever."""
+import logging
 import os
 import time
 import uuid
-from typing import Iterable
+
 from pinecone import Pinecone, ServerlessSpec
+
+try:
+    from pinecone.exceptions import PineconeException
+except ImportError:
+    PineconeException = Exception  # type: ignore
 from rank_bm25 import BM25Okapi
 
-from rag.llm_client import embed_text, embed_texts, EMBED_DIM
+from rag.llm_client import EMBED_DIM, embed_text, embed_texts
+
+logger = logging.getLogger(__name__)
 
 INDEX_NAME = os.environ["PINECONE_INDEX"]
 PC_CLOUD = os.environ["PINECONE_CLOUD"]
@@ -77,9 +85,8 @@ def delete_by_source(source: str):
     idx = _ensure_index()
     try:
         idx.delete(filter={"source": {"$eq": source}})
-    except Exception:
-        # Namespace may not exist yet (fresh index) or filter delete unsupported: ignore
-        pass
+    except (PineconeException, TypeError, AttributeError) as e:
+        logger.debug("Pinecone delete by source '%s' skipped: %s", source, e)
 
 
 def delete_by_ids(ids: list[str]):
@@ -88,8 +95,8 @@ def delete_by_ids(ids: list[str]):
     idx = _ensure_index()
     try:
         idx.delete(ids=ids)
-    except Exception:
-        pass
+    except (PineconeException, TypeError, AttributeError) as e:
+        logger.debug("Pinecone delete by ids failed: %s", e)
 
 
 def dense_search(query: str, top_k: int = 8) -> list[dict]:
@@ -162,5 +169,5 @@ def index_stats() -> dict:
             "dimension": s.get("dimension", EMBED_DIM),
             "namespaces": list((s.get("namespaces") or {}).keys()),
         }
-    except Exception as e:
+    except (PineconeException, RuntimeError) as e:
         return {"error": str(e)}

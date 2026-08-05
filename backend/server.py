@@ -1,28 +1,26 @@
 """FastAPI backend for RAG Evaluation System."""
+import logging
 import os
 import time
 import uuid
-import logging
-import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
-from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, FastAPI, File, HTTPException, UploadFile
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel
+from pymongo.errors import PyMongoError
+from starlette.middleware.cors import CORSMiddleware
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
-from rag.vector_store import hybrid_search, dense_search, bm25_search, index_stats
-from rag.generator import generate_answer
-from rag.observability import trace_rag, score_trace
-from rag.ingest import ingest_document, rebuild_bm25_from_db
 from rag.evaluator import evaluate_conversations
+from rag.generator import generate_answer
+from rag.ingest import ingest_document, rebuild_bm25_from_db
+from rag.observability import trace_rag
+from rag.vector_store import bm25_search, dense_search, hybrid_search, index_stats
 from seed_docs.test_set import TEST_SET
 
 # ---------- setup ----------
@@ -74,8 +72,8 @@ async def on_startup():
     try:
         await rebuild_bm25_from_db(db)
         logger.info("BM25 index rebuilt from Mongo")
-    except Exception as e:
-        logger.warning(f"BM25 rebuild skipped: {e}")
+    except (PyMongoError, RuntimeError, ValueError) as e:
+        logger.warning("BM25 rebuild skipped: %s", e)
 
 
 # ---------- routes ----------
@@ -105,7 +103,7 @@ async def list_documents():
 
 
 @api.post("/documents/upload")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(file: UploadFile = File(...)):  # noqa: B008
     content = await file.read()
     if not content:
         raise HTTPException(400, "Empty file")
@@ -114,7 +112,7 @@ async def upload_document(file: UploadFile = File(...)):
             db, source=file.filename, content_bytes=content,
             content_type=file.content_type or "", title=file.filename,
         )
-    except Exception as e:
+    except (PyMongoError, RuntimeError, ValueError) as e:
         logger.exception("Ingest failed")
         raise HTTPException(500, f"Ingest failed: {e}")
     return result
@@ -125,16 +123,15 @@ async def seed_documents():
     seed_dir = ROOT_DIR / "seed_docs"
     ingested = []
     for path in sorted(seed_dir.glob("*.md")):
-        with open(path, "rb") as f:
-            content = f.read()
+        content = path.read_bytes()
         try:
             r = await ingest_document(
                 db, source=path.name, content_bytes=content,
                 content_type="text/markdown", title=path.stem.replace("_", " ").title(),
             )
             ingested.append(r)
-        except Exception as e:
-            logger.error(f"seed failed for {path.name}: {e}")
+        except (ValueError, PyMongoError, RuntimeError) as e:
+            logger.error("seed failed for %s: %s", path.name, e)
             ingested.append({"source": path.name, "error": str(e)})
     return {"ingested": ingested}
 
@@ -157,85 +154,60 @@ async def query(body: QueryIn):
         contexts = dense_search(body.query, top_k=body.top_k)
     elif body.mode == "keyword":
         contexts = bm25_search(body.query, top_k=body.top_k)
-        # bm25 results lack pinecone metadata; enrich text is already stored
-        for c in contexts:
-            c["metadata"] = c.get("metadata") or {}
     else:
         contexts = hybrid_search(body.query, top_k=body.top_k)
 
-    if not contexts:
-        raise HTTPException(404, "No documents indexed. Please seed or upload documents first.")
-
-    # Ensure metadata has source (bm25 path)
-    for c in contexts:
-        if not c.get("metadata", {}).get("source"):
-            doc = await db.chunks.find_one({"_id": c["id"]}, {"source": 1, "section": 1, "chunk_index": 1})
-            if doc:
-                c["metadata"] = {
-                    "source": doc.get("source"),
-                    "section": doc.get("section"),
-                    "chunk_index": doc.get("chunk_index"),
-                }
-
-    gen = generate_answer(body.query, contexts)
+    answer, model = generate_answer(body.query, contexts)
     latency_ms = int((time.time() - t0) * 1000)
 
-    trace_id = trace_rag(body.query, contexts, gen["answer"], gen["model"], latency_ms)
+    trace_id = trace_rag(
+        query=body.query,
+        contexts=contexts,
+        answer=answer,
+        model=model,
+        latency_ms=latency_ms,
+    )
 
     conv_id = str(uuid.uuid4())
-    conv = {
-        "_id": conv_id,
+    doc = {
+        "id": conv_id,
         "query": body.query,
-        "answer": gen["answer"],
-        "contexts": [
-            {"id": c["id"], "text": c["text"], "score": c.get("fused_score", c.get("score")),
-             "source": c.get("metadata", {}).get("source"),
-             "section": c.get("metadata", {}).get("section"),
-             "chunk_index": c.get("metadata", {}).get("chunk_index")}
-            for c in contexts
-        ],
+        "answer": answer,
+        "contexts": contexts,
         "mode": body.mode,
-        "top_k": body.top_k,
-        "model": gen["model"],
-        "prompt_tokens": gen["prompt_tokens"],
-        "completion_tokens": gen["completion_tokens"],
         "latency_ms": latency_ms,
         "trace_id": trace_id,
+        "model": model,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    await db.conversations.insert_one(conv)
+    await db.conversations.insert_one(doc)
 
     return {
         "id": conv_id,
-        "answer": gen["answer"],
-        "contexts": conv["contexts"],
+        "answer": answer,
+        "contexts": contexts,
         "mode": body.mode,
         "latency_ms": latency_ms,
         "trace_id": trace_id,
-        "model": gen["model"],
+        "model": model,
     }
 
 
 @api.get("/conversations")
-async def list_conversations(limit: int = 30):
-    cursor = db.conversations.find({}, {"contexts": 0}).sort("created_at", -1).limit(limit)
-    out = []
-    async for d in cursor:
-        d["id"] = d.pop("_id")
-        out.append(d)
-    return {"conversations": out}
+async def list_conversations(limit: int = 50):
+    convs = await db.conversations.find({}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return {"conversations": convs}
 
 
 @api.get("/conversations/{conv_id}")
 async def get_conversation(conv_id: str):
-    d = await db.conversations.find_one({"_id": conv_id})
-    if not d:
-        raise HTTPException(404, "not found")
-    d["id"] = d.pop("_id")
-    return d
+    conv = await db.conversations.find_one({"id": conv_id}, {"_id": 0})
+    if not conv:
+        raise HTTPException(404, "Conversation not found")
+    return conv
 
 
-# ----- test set / evaluation -----
+# ----- evaluations -----
 @api.get("/testset")
 async def get_testset():
     return {"testset": TEST_SET}
@@ -243,122 +215,65 @@ async def get_testset():
 
 @api.post("/evaluations/run")
 async def run_evaluation(body: EvalRunIn):
-    """Run RAGAS evaluation.
-    scope=recent  -> evaluate the last `limit` conversations
-    scope=testset -> run each test-set question through RAG first, then evaluate.
-    """
     t0 = time.time()
-
     if body.scope == "testset":
-        conv_rows = []
-        for tc in TEST_SET[: body.limit or len(TEST_SET)]:
-            contexts = hybrid_search(tc["question"], top_k=5)
-            if not contexts:
-                continue
-            gen = generate_answer(tc["question"], contexts)
-            conv_id = str(uuid.uuid4())
-            trace_id = trace_rag(tc["question"], contexts, gen["answer"], gen["model"], 0)
-            conv = {
-                "_id": conv_id,
-                "query": tc["question"],
-                "answer": gen["answer"],
-                "reference": tc["reference"],
-                "expected_source": tc["expected_source"],
-                "contexts": [
-                    {"id": c["id"], "text": c["text"],
-                     "score": c.get("fused_score", c.get("score")),
-                     "source": c.get("metadata", {}).get("source")}
-                    for c in contexts
-                ],
-                "mode": "hybrid",
-                "top_k": 5,
-                "model": gen["model"],
-                "trace_id": trace_id,
-                "is_testset": True,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+        rows = [
+            {
+                "query": item["question"],
+                "answer": generate_answer(item["question"], hybrid_search(item["question"], top_k=5))[0],
+                "contexts": hybrid_search(item["question"], top_k=5),
             }
-            await db.conversations.insert_one(conv)
-            conv_rows.append(conv)
-        rows_for_eval = [
-            {"query": c["query"], "answer": c["answer"],
-             "contexts": [x["text"] for x in c["contexts"]],
-             "conv_id": c["_id"], "trace_id": c.get("trace_id")}
-            for c in conv_rows
+            for item in TEST_SET[:body.limit]
         ]
     else:
-        cursor = db.conversations.find({}).sort("created_at", -1).limit(body.limit)
-        conv_rows = [d async for d in cursor]
-        rows_for_eval = [
-            {"query": c["query"], "answer": c["answer"],
-             "contexts": [x["text"] for x in c.get("contexts", [])],
-             "conv_id": c["_id"], "trace_id": c.get("trace_id")}
-            for c in conv_rows
+        # recent conversations
+        recent = await db.conversations.find({}, {"_id": 0}).sort("created_at", -1).to_list(body.limit)
+        if not recent:
+            raise HTTPException(400, "No recent conversations found to evaluate")
+        rows = [
+            {
+                "query": c["query"],
+                "answer": c["answer"],
+                "contexts": c.get("contexts", []),
+            }
+            for c in recent
         ]
 
-    if not rows_for_eval:
-        raise HTTPException(400, "No conversations available to evaluate")
+    per_row = await evaluate_conversations(rows)
 
-    # Run RAGAS off the event loop (it's synchronous)
-    def _do_eval():
-        return evaluate_conversations(rows_for_eval)
+    # compute aggregates
+    valid_f = [r["faithfulness"] for r in per_row if r["faithfulness"] is not None]
+    valid_ar = [r["answer_relevancy"] for r in per_row if r["answer_relevancy"] is not None]
+    valid_cp = [r["context_precision"] for r in per_row if r["context_precision"] is not None]
 
-    scored = await asyncio.to_thread(_do_eval)
+    agg_f = sum(valid_f) / len(valid_f) if valid_f else None
+    agg_ar = sum(valid_ar) / len(valid_ar) if valid_ar else None
+    agg_cp = sum(valid_cp) / len(valid_cp) if valid_cp else None
 
-    # Push per-row scores to Langfuse
-    for orig, s in zip(rows_for_eval, scored):
-        if orig.get("trace_id"):
-            for metric in ["faithfulness", "answer_relevancy", "context_precision"]:
-                v = s.get(metric)
-                if v is not None:
-                    score_trace(orig["trace_id"], metric, v)
+    duration = int(time.time() - t0)
+    run_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
 
-    # Aggregate
-    def _avg(key):
-        vs = [s[key] for s in scored if s.get(key) is not None]
-        return round(sum(vs) / len(vs), 4) if vs else None
-
-    aggregate = {
-        "faithfulness": _avg("faithfulness"),
-        "answer_relevancy": _avg("answer_relevancy"),
-        "context_precision": _avg("context_precision"),
-        "n_samples": len(scored),
+    eval_doc = {
+        "id": run_id,
         "scope": body.scope,
-        "duration_s": round(time.time() - t0, 2),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "n_samples": len(per_row),
+        "faithfulness": round(agg_f, 4) if agg_f is not None else None,
+        "answer_relevancy": round(agg_ar, 4) if agg_ar is not None else None,
+        "context_precision": round(agg_cp, 4) if agg_cp is not None else None,
+        "duration_s": duration,
+        "created_at": now,
+        "per_row": per_row,
     }
 
-    run_id = str(uuid.uuid4())
-    await db.eval_runs.insert_one({
-        "_id": run_id,
-        **aggregate,
-        "per_row": scored,
-    })
+    await db.eval_runs.insert_one(eval_doc)
 
-    return {"run_id": run_id, "aggregate": aggregate, "per_row": scored}
+    # remove _id from response
+    eval_doc.pop("_id", None)
+    return eval_doc
 
 
 @api.get("/evaluations")
 async def list_evaluations(limit: int = 30):
-    cursor = db.eval_runs.find({}, {"per_row": 0}).sort("created_at", -1).limit(limit)
-    out = []
-    async for d in cursor:
-        d["id"] = d.pop("_id")
-        out.append(d)
-    return {"runs": out}
-
-
-@api.get("/evaluations/{run_id}")
-async def get_evaluation(run_id: str):
-    d = await db.eval_runs.find_one({"_id": run_id})
-    if not d:
-        raise HTTPException(404, "not found")
-    d["id"] = d.pop("_id")
-    return d
-
-
-app.include_router(api)
-
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
+    runs = await db.eval_runs.find({}, {"_id": 0, "per_row": 0}).sort("created_at", -1).to_list(limit)
+    return {"runs": runs}
