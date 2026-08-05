@@ -28,7 +28,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
-          pip uninstall -y torch
+          pip uninstall -y torch || true
           pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
       - name: Lint
         run: |
@@ -38,7 +38,6 @@ jobs:
         env:
           MONGO_URL: mongodb://localhost:27017
           DB_NAME: rag_eval_ci
-          # Integration tests are skipped in CI unless real keys are provided
         run: |
           cd backend && pytest -q -k "not integration" || true
 
@@ -49,10 +48,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "yarn"
-          cache-dependency-path: frontend/yarn.lock
       - name: Install frontend deps
-        run: cd frontend && yarn install --frozen-lockfile || yarn install
+        run: cd frontend && yarn install
       - name: Build
         env:
           CI: "false"
