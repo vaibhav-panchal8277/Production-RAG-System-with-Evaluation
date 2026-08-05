@@ -5,21 +5,75 @@ import { api } from "@/lib/api";
 export default function HistoryPanel() {
   const { data, isLoading } = useQuery({
     queryKey: ["conversations"],
-    queryFn: () => api.listConversations(60),
+    queryFn: () => api.listConversations(100),
   });
+
+  const exportJson = () => {
+    const list = data?.conversations || [];
+    const blob = new Blob([JSON.stringify(list, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `rag-conversations-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportCsv = () => {
+    const list = data?.conversations || [];
+    if (!list.length) return;
+    const headers = ["id", "created_at", "mode", "query", "answer", "latency_ms", "trace_id"];
+    const rows = list.map((c) =>
+      [
+        c.id || "",
+        c.created_at || "",
+        c.mode || "",
+        `"${(c.query || "").replace(/"/g, '""')}"`,
+        `"${(c.answer || "").replace(/"/g, '""')}"`,
+        c.latency_ms || "",
+        c.trace_id || "",
+      ].join(",")
+    );
+    const csvContent = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `rag-conversations-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="min-h-screen">
-      <div className="px-8 pt-8 pb-6 border-b border-white/10">
-        <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-neutral-500">
-          Query log
+      <div className="px-8 pt-8 pb-6 border-b border-white/10 flex items-center justify-between">
+        <div>
+          <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-neutral-500">
+            Query log
+          </div>
+          <h1 className="font-heading text-4xl font-black leading-none mt-2 text-white">
+            History.
+          </h1>
+          <div className="text-sm text-neutral-400 mt-3 max-w-2xl">
+            Every query is persisted in MongoDB and mirrored to Langfuse as a trace with
+            retrieve + generate spans.
+          </div>
         </div>
-        <h1 className="font-heading text-4xl font-black leading-none mt-2 text-white">
-          History.
-        </h1>
-        <div className="text-sm text-neutral-400 mt-3 max-w-2xl">
-          Every query is persisted in MongoDB and mirrored to Langfuse as a trace with
-          retrieve + generate spans.
+        <div className="flex items-center gap-3">
+          <button
+            onClick={exportCsv}
+            data-testid="export-csv-btn"
+            className="font-mono text-xs uppercase tracking-widest px-4 py-2 border border-white/20 bg-white/5 text-white hover:bg-white/10 transition-colors"
+          >
+            Export CSV
+          </button>
+          <button
+            onClick={exportJson}
+            data-testid="export-json-btn"
+            className="font-mono text-xs uppercase tracking-widest px-4 py-2 border border-white/20 bg-white/5 text-white hover:bg-white/10 transition-colors"
+          >
+            Export JSON
+          </button>
         </div>
       </div>
 
