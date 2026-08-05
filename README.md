@@ -79,12 +79,36 @@ cp backend/env.example.txt backend/.env
 cp frontend/env.example.txt frontend/.env
 ```
 
-### 3) Run with Docker (Recommended - Zero Local DB Install)
+### 3) Running the App
 
+#### Option A: With Docker Compose (Recommended)
 ```bash
+# First time build (takes a few minutes to download AI packages)
 docker compose up --build
+
+# Subsequent starts (instantaneous)
+docker compose up
 ```
-*(Note: MongoDB runs inside Docker on port `27018` to avoid conflicting with any local instances on `27017`)*
+
+#### Option B: Running Locally without Docker
+If you prefer running the backend and frontend directly on your machine in two separate terminals:
+
+**Terminal 1 (Backend - FastAPI):**
+```bash
+cd backend
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn server:app --host 0.0.0.0 --port 8001 --reload
+```
+
+**Terminal 2 (Frontend - React):**
+```bash
+cd frontend
+yarn install
+yarn start
+```
+*(Make sure MongoDB is running locally or via Docker on port 27018)*
 
 Open **http://localhost:3000** → sidebar should show `langfuse: connected` and vectors will be `0`. Click **02 · Corpus → Seed sample corpus**, then head to **01 · Ask** and try:
 
