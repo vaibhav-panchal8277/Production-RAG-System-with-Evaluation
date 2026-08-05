@@ -72,42 +72,19 @@ git clone <your-repo-url> rag-eval-lab
 cd rag-eval-lab
 
 # Backend env
-cp backend/.env.example backend/.env
+cp backend/env.example.txt backend/.env
 # Now open backend/.env and paste your real keys
 
-# Frontend env (only needed if the default localhost URL doesn't work)
-cp frontend/.env.example frontend/.env
+# Frontend env
+cp frontend/env.example.txt frontend/.env
 ```
 
-### 3) Install
+### 3) Run with Docker (Recommended - Zero Local DB Install)
 
 ```bash
-# Backend
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r backend/requirements.txt
-
-# For CPU-only PyTorch (much smaller install), override with:
-pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
-
-# Frontend
-cd frontend && yarn install && cd ..
+docker compose up --build
 ```
-
-### 4) Run
-
-```bash
-# terminal 1 — MongoDB (if not already running)
-mongod --dbpath /tmp/rag-mongo
-
-# terminal 2 — FastAPI
-cd backend
-uvicorn server:app --host 0.0.0.0 --port 8001 --reload
-
-# terminal 3 — React
-cd frontend
-yarn start
-```
+*(Note: MongoDB runs inside Docker on port `27018` to avoid conflicting with any local instances on `27017`)*
 
 Open **http://localhost:3000** → sidebar should show `langfuse: connected` and vectors will be `0`. Click **02 · Corpus → Seed sample corpus**, then head to **01 · Ask** and try:
 
