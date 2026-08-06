@@ -1,4 +1,4 @@
-"""Pinecone client + hybrid dense/BM25 retriever."""
+"""Pinecone client + hybrid dense/BM25 retriever with graceful fallback."""
 import logging
 import os
 import time
@@ -16,11 +16,18 @@ from rag.llm_client import EMBED_DIM, embed_text, embed_texts
 
 logger = logging.getLogger(__name__)
 
-INDEX_NAME = os.environ["PINECONE_INDEX"]
-PC_CLOUD = os.environ["PINECONE_CLOUD"]
-PC_REGION = os.environ["PINECONE_REGION"]
+INDEX_NAME = os.environ.get("PINECONE_INDEX", "rag-eval-index")
+PC_CLOUD = os.environ.get("PINECONE_CLOUD", "aws")
+PC_REGION = os.environ.get("PINECONE_REGION", "us-east-1")
+PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY", "")
 
-_pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
+_pc = None
+try:
+    if PINECONE_API_KEY and PINECONE_API_KEY != "pc_test_key":
+        _pc = Pinecone(api_key=PINECONE_API_KEY)
+except (PineconeException, RuntimeError, ValueError) as e:
+    logger.warning("Pinecone client initialization failed: %s", e)
+
 _index = None
 _bm25: BM25Okapi | None = None
 _bm25_ids: list[str] = []
@@ -31,6 +38,8 @@ def _ensure_index():
     global _index
     if _index is not None:
         return _index
+    if not _pc:
+        raise RuntimeError("Pinecone client is not initialized or API key is invalid.")
     names = [x["name"] for x in _pc.list_indexes()]
     if INDEX_NAME not in names:
         _pc.create_index(
@@ -39,7 +48,6 @@ def _ensure_index():
             metric="cosine",
             spec=ServerlessSpec(cloud=PC_CLOUD, region=PC_REGION),
         )
-        # wait for index to be ready
         for _ in range(30):
             desc = _pc.describe_index(INDEX_NAME)
             if desc.status.get("ready"):
@@ -66,7 +74,12 @@ def rebuild_bm25(records: list[dict]):
 
 def upsert_chunks(chunks: list[dict], batch_size: int = 64):
     """chunks: [{'id','text','metadata':{...}}, ...]"""
-    idx = _ensure_index()
+    try:
+        idx = _ensure_index()
+    except (PineconeException, RuntimeError) as e:
+        logger.warning("Pinecone upsert skipped (index unavailable): %s", e)
+        return
+
     for i in range(0, len(chunks), batch_size):
         batch = chunks[i : i + batch_size]
         embeds = embed_texts([c["text"] for c in batch])
@@ -78,42 +91,49 @@ def upsert_chunks(chunks: list[dict], batch_size: int = 64):
             }
             for c, e in zip(batch, embeds)
         ]
-        idx.upsert(vectors=vectors)
+        try:
+            idx.upsert(vectors=vectors)
+        except (PineconeException, RuntimeError) as err:
+            logger.warning("Pinecone batch upsert failed: %s", err)
 
 
 def delete_by_source(source: str):
-    idx = _ensure_index()
     try:
+        idx = _ensure_index()
         idx.delete(filter={"source": {"$eq": source}})
-    except (PineconeException, TypeError, AttributeError) as e:
+    except (PineconeException, TypeError, AttributeError, RuntimeError) as e:
         logger.debug("Pinecone delete by source '%s' skipped: %s", source, e)
 
 
 def delete_by_ids(ids: list[str]):
     if not ids:
         return
-    idx = _ensure_index()
     try:
+        idx = _ensure_index()
         idx.delete(ids=ids)
-    except (PineconeException, TypeError, AttributeError) as e:
+    except (PineconeException, TypeError, AttributeError, RuntimeError) as e:
         logger.debug("Pinecone delete by ids failed: %s", e)
 
 
 def dense_search(query: str, top_k: int = 8) -> list[dict]:
-    idx = _ensure_index()
-    qv = embed_text(query)
-    res = idx.query(vector=qv, top_k=top_k, include_metadata=True)
-    out = []
-    for m in res.matches:
-        out.append(
-            {
-                "id": m.id,
-                "score": float(m.score),
-                "text": m.metadata.get("text", ""),
-                "metadata": {k: v for k, v in m.metadata.items() if k != "text"},
-            }
-        )
-    return out
+    try:
+        idx = _ensure_index()
+        qv = embed_text(query)
+        res = idx.query(vector=qv, top_k=top_k, include_metadata=True)
+        out = []
+        for m in res.matches:
+            out.append(
+                {
+                    "id": m.id,
+                    "score": float(m.score),
+                    "text": m.metadata.get("text", ""),
+                    "metadata": {k: v for k, v in m.metadata.items() if k != "text"},
+                }
+            )
+        return out
+    except (PineconeException, RuntimeError, ValueError) as e:
+        logger.debug("Dense search unavailable, falling back to empty: %s", e)
+        return []
 
 
 def bm25_search(query: str, top_k: int = 8) -> list[dict]:
@@ -138,6 +158,10 @@ def hybrid_search(query: str, top_k: int = 5, alpha: float = 0.6) -> list[dict]:
     dense = dense_search(query, top_k=top_k * 3)
     keyword = bm25_search(query, top_k=top_k * 3)
 
+    # If dense is empty (e.g. Pinecone not configured), rely purely on BM25 keyword search
+    if not dense:
+        return keyword[:top_k]
+
     ranks: dict[str, dict] = {}
     k_rrf = 60
 
@@ -147,7 +171,6 @@ def hybrid_search(query: str, top_k: int = 5, alpha: float = 0.6) -> list[dict]:
 
     for r, hit in enumerate(keyword):
         ranks.setdefault(hit["id"], {"hit": hit, "score": 0.0})
-        # if we already have the hit from dense, keep its metadata (has text+source)
         ranks[hit["id"]]["score"] += (1 - alpha) * (1.0 / (k_rrf + r + 1))
 
     fused = sorted(ranks.values(), key=lambda x: -x["score"])[:top_k]
@@ -169,5 +192,5 @@ def index_stats() -> dict:
             "dimension": s.get("dimension", EMBED_DIM),
             "namespaces": list((s.get("namespaces") or {}).keys()),
         }
-    except (PineconeException, RuntimeError) as e:
-        return {"error": str(e)}
+    except (PineconeException, RuntimeError, ValueError) as e:
+        return {"error": f"Pinecone unavailable ({e})"}

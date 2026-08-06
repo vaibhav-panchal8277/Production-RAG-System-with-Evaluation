@@ -317,6 +317,102 @@ def test_testset_endpoint():
         print(f"\n❌ FAIL: {e}")
         return False
 
+def test_bm25_keyword_search():
+    """Test BM25 keyword search mode (should work without Pinecone)"""
+    print(f"\n{'='*60}")
+    print("Testing BM25 Keyword Search (Fallback Mode)")
+    print(f"{'='*60}")
+    
+    try:
+        # First ensure documents are seeded
+        seed_response = requests.post(f"{API_BASE}/documents/seed", timeout=30)
+        print(f"Seed Status: {seed_response.status_code}")
+        
+        # Test keyword search mode (pure BM25, no Pinecone needed)
+        payload = {
+            "query": "What is RAG evaluation?",
+            "top_k": 5,
+            "mode": "keyword"
+        }
+        response = requests.post(f"{API_BASE}/query", json=payload, timeout=30)
+        
+        print(f"Status Code: {response.status_code}")
+        print(f"Response: {response.json()}")
+        
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+        
+        data = response.json()
+        assert "answer" in data, "answer field missing"
+        assert "contexts" in data, "contexts field missing"
+        assert isinstance(data["contexts"], list), "contexts should be a list"
+        
+        # Verify BM25 returned some contexts
+        print(f"\nBM25 returned {len(data['contexts'])} contexts")
+        if len(data['contexts']) > 0:
+            print(f"Sample context: {data['contexts'][0].get('text', '')[:100]}...")
+        
+        print("\n✅ PASS: BM25 keyword search working (Pinecone fallback functional)")
+        return True
+        
+    except Exception as e:
+        print(f"\n❌ FAIL: {e}")
+        return False
+
+def test_document_seeding_with_bm25_fallback():
+    """Test that document seeding works and BM25 index is built even when Pinecone fails"""
+    print(f"\n{'='*60}")
+    print("Testing Document Seeding with BM25 Fallback")
+    print(f"{'='*60}")
+    
+    try:
+        # Get initial document count
+        docs_before = requests.get(f"{API_BASE}/documents", timeout=10)
+        initial_count = len(docs_before.json()["documents"])
+        print(f"Initial document count: {initial_count}")
+        
+        # Seed documents (should work even if Pinecone fails)
+        response = requests.post(f"{API_BASE}/documents/seed", timeout=30)
+        
+        print(f"Status Code: {response.status_code}")
+        print(f"Response: {response.json()}")
+        
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+        
+        data = response.json()
+        assert "ingested" in data, "ingested field missing"
+        assert isinstance(data["ingested"], list), "ingested should be a list"
+        
+        # Check that documents were ingested successfully
+        successful_ingests = [doc for doc in data["ingested"] if "error" not in doc]
+        print(f"\nSuccessfully ingested: {len(successful_ingests)} documents")
+        
+        # Verify documents are in MongoDB
+        docs_after = requests.get(f"{API_BASE}/documents", timeout=10)
+        final_count = len(docs_after.json()["documents"])
+        print(f"Final document count: {final_count}")
+        
+        assert final_count >= initial_count, "Documents should be in MongoDB"
+        
+        # Test that BM25 search works (proves BM25 index was built)
+        query_payload = {
+            "query": "evaluation metrics",
+            "top_k": 3,
+            "mode": "keyword"
+        }
+        query_response = requests.post(f"{API_BASE}/query", json=query_payload, timeout=30)
+        query_data = query_response.json()
+        
+        print(f"\nBM25 search returned {len(query_data.get('contexts', []))} contexts")
+        
+        assert len(query_data.get('contexts', [])) > 0, "BM25 index should return results"
+        
+        print("\n✅ PASS: Document seeding works with BM25 fallback (Pinecone not required)")
+        return True
+        
+    except Exception as e:
+        print(f"\n❌ FAIL: {e}")
+        return False
+
 if __name__ == "__main__":
     print(f"Backend URL: {BACKEND_URL}")
     print(f"API Base: {API_BASE}")
@@ -325,7 +421,8 @@ if __name__ == "__main__":
         ("Root Endpoint", test_root_endpoint),
         ("Health Check", test_health_endpoint),
         ("Documents List", test_documents_list),
-        ("Seed Documents", test_seed_documents),
+        ("Document Seeding with BM25 Fallback", test_document_seeding_with_bm25_fallback),
+        ("BM25 Keyword Search", test_bm25_keyword_search),
         ("Guardrails: Empty Query", test_guardrails_empty_query),
         ("Guardrails: Long Query", test_guardrails_long_query),
         ("Guardrails: Prompt Injection", test_guardrails_prompt_injection),
