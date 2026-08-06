@@ -1,9 +1,9 @@
-"""Grounded answer generation with strict citations and guardrails."""
+"""Grounded answer generation with NeMo Guardrails integration."""
 import logging
 
 from openai import OpenAIError
 
-from rag.guardrails import sanitize_output, validate_input
+from rag.guardrails import check_input_rails
 from rag.llm_client import LLM_MODEL, get_openai
 
 logger = logging.getLogger(__name__)
@@ -34,10 +34,10 @@ def build_user_prompt(query: str, contexts: list[dict]) -> str:
 
 
 def generate_answer(query: str, contexts: list[dict]) -> tuple[str, str]:
-    # 1. Input guardrail validation
-    is_valid, err_msg = validate_input(query)
-    if not is_valid:
-        return err_msg, LLM_MODEL
+    # 1. NeMo Guardrails check
+    rail_response = check_input_rails(query)
+    if rail_response:
+        return rail_response, LLM_MODEL
 
     client = get_openai()
     user_prompt = build_user_prompt(query, contexts)
@@ -56,6 +56,4 @@ def generate_answer(query: str, contexts: list[dict]) -> tuple[str, str]:
         logger.error("LLM generation failed: %s", e)
         answer = "I encountered an error while generating the answer. Please try again."
 
-    # 2. Output guardrail sanitization (PII filtering)
-    safe_answer = sanitize_output(answer)
-    return safe_answer, LLM_MODEL
+    return answer, LLM_MODEL

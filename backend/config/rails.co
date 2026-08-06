@@ -1,0 +1,15 @@
+define user express greeting
+    - hello
+    - hi
+    - hey
+
+define bot express greeting
+    - Hello! I am your RAG evaluation assistant. How can I help you with your documents today?
+
+define user ask off topic
+    - what is the weather today?
+    - who won the football match?
+    - tell me a joke
+
+define bot express off topic
+    - I am restricted to answering questions based on the uploaded internal documents and policy manuals. Please ask a document-related question!
