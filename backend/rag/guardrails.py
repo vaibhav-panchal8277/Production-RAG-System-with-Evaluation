@@ -1,4 +1,4 @@
-"""NeMo Guardrails wrapper for semantic input/output validation."""
+"""NeMo Guardrails wrapper for semantic input/output validation with robust fallback."""
 import logging
 from pathlib import Path
 
@@ -15,7 +15,7 @@ except (ImportError, ValueError, RuntimeError, OSError) as e:
 
 
 def check_input_rails(query: str) -> str | None:
-    """Run semantic input guardrails via NeMo Guardrails."""
+    """Run semantic input guardrails via NeMo Guardrails with graceful fallback."""
     if not rails:
         return None
     try:
@@ -25,6 +25,7 @@ def check_input_rails(query: str) -> str | None:
             return res["content"]
         if isinstance(res, str) and res.strip():
             return res
-    except (ValueError, RuntimeError, ConnectionError) as e:
-        logger.debug("NeMo Guardrails evaluation failed: %s", e)
+    except Exception as e:  # noqa: BLE001
+        # Catch any guardrails / LLM auth exceptions during guardrails check and fall back gracefully
+        logger.debug("NeMo Guardrails evaluation skipped/bypassed: %s", e)
     return None
