@@ -97,12 +97,15 @@ backend:
         - working: true
           agent: "testing"
           comment: "✅ RE-VERIFIED AGAIN: Backend health check endpoint FULLY WORKING. GET /api/health returns 200 OK with proper structure: mongo_docs=4, mongo_conversations=16, pinecone={'error': 'Pinecone unavailable (Pinecone client is not initialized or API key is invalid.)'}, langfuse_configured=True. All other basic endpoints (root, documents, conversations, evaluations, testset) return 200 OK with proper JSON structure."
+        - working: true
+          agent: "testing"
+          comment: "✅ VERIFIED (2026-08-06): All basic API endpoints working correctly. GET /api/health returns 200 OK with mongo_docs=4, mongo_conversations=22, pinecone error (expected), langfuse_configured=True. All list endpoints (documents, conversations, evaluations, testset) return 200 OK with proper JSON arrays."
   
   - task: "Guardrails Input Validation"
     implemented: true
     working: false
     file: "backend/rag/guardrails.py, backend/rag/generator.py, backend/config/config.yml, backend/config/rails.co"
-    stuck_count: 2
+    stuck_count: 3
     priority: "high"
     needs_retesting: false
     status_history:
@@ -118,6 +121,9 @@ backend:
         - working: false
           agent: "testing"
           comment: "❌ REQUIREMENTS DEPENDENCY VERIFIED: nemoguardrails package IS installed (version 0.23.0 confirmed via pip list and python import). However, NeMo Guardrails has CONFIGURATION VALIDATION ERROR. Backend logs show 'NeMo Guardrails initialization skipped or failed: 1 validation error for RailsConfig'. Root cause: config.yml references flows 'self check input' and 'self check output' under rails.input.flows and rails.output.flows, but these flows are NOT defined in rails.co file. The rails.co only defines 'user express greeting', 'bot express greeting', 'user ask off topic', and 'bot express off topic'. All guardrail tests FAILING: (1) Empty query returns generic LLM error, (2) Long query (2001 chars) returns generic LLM error, (3) Prompt injection returns generic LLM error. REQUIRES: Either define the missing flows in rails.co or remove the flow references from config.yml."
+        - working: false
+          agent: "testing"
+          comment: "❌ CRITICAL (2026-08-06): NeMo Guardrails configuration BLOCKING ALL QUERIES. Root cause: config.yml only specifies model (gpt-4o-mini) with engine=openai but does NOT specify the custom API endpoint. NeMo tries to call default OpenAI endpoint (https://api.openai.com/v1) instead of Emergent endpoint (https://integrations.emergentagent.com/v1), causing LLMCallException with 401 error 'You didn't provide an API key'. This exception is NOT caught in guardrails.py (only catches ValueError, RuntimeError, ConnectionError), so it propagates up and causes 500 errors on ALL /api/query requests. Backend logs show: 'nemoguardrails.exceptions.LLMCallException: Error invoking LLM (model=gpt-4o-mini, provider=openai, endpoint=https://api.openai.com/v1)'. FIX REQUIRED: Either (1) Update config.yml to specify custom API base URL, OR (2) Add LLMCallException to caught exceptions in guardrails.py, OR (3) Disable NeMo Guardrails and use simpler validation."
   
   - task: "Pinecone Vector Store Integration"
     implemented: true
@@ -148,6 +154,9 @@ backend:
         - working: true
           agent: "testing"
           comment: "✅ RE-VERIFIED: Document seeding with BM25 fallback FULLY WORKING. (1) POST /api/documents/seed returns 200 OK and successfully ingests 4 markdown documents. (2) Documents saved to MongoDB (confirmed via GET /api/documents showing 4 documents). (3) BM25 index rebuilt from MongoDB on startup (confirmed in backend logs: 'BM25 index rebuilt from Mongo'). (4) BM25 keyword search (mode='keyword') returns 4 relevant contexts with proper scoring. (5) System gracefully handles Pinecone unavailability - backend logs show 'Pinecone upsert skipped' warnings but ingestion completes successfully. (6) Hybrid search mode falls back to BM25 when Pinecone unavailable. CONCLUSION: BM25 fallback mechanism is fully operational and robust."
+        - working: true
+          agent: "testing"
+          comment: "✅ VERIFIED (2026-08-06): Document seeding with BM25 fallback FULLY WORKING. (1) POST /api/documents/seed returns 200 OK and successfully ingests 4 markdown documents. (2) Documents saved to MongoDB (confirmed via GET /api/documents showing 4 documents). (3) BM25 index rebuilt from MongoDB on startup (confirmed in backend logs: 'BM25 index rebuilt from Mongo' at 17:13:40). (4) System gracefully handles Pinecone unavailability - backend logs show 'Pinecone upsert skipped' warnings but ingestion completes successfully. NOTE: Cannot test BM25 keyword search due to NeMo Guardrails blocking all /api/query requests, but document seeding and BM25 index rebuild are confirmed working."
   
   - task: "LLM Generation via Emergent API"
     implemented: true
@@ -197,3 +206,5 @@ agent_communication:
       message: "CRITICAL FINDINGS - RE-TESTING REVEALED MAJOR ISSUES: ❌ NeMo Guardrails NOT INSTALLED - Package listed in requirements.txt but not in Python environment. Backend logs show 'No module named nemoguardrails'. Config files exist but guardrails.py import fails. ALL GUARDRAIL TESTS FAILING - empty query, long query, and prompt injection tests all return generic LLM errors instead of validation errors. Previous test reports claiming guardrails were working were INCORRECT. ❌ LLM Generation still failing with 404 'fault filter abort' from Emergent API (invalid test key). ✅ WORKING: Backend health, document seeding with BM25 fallback, BM25 keyword search, all basic API endpoints, conversations list and individual retrieval. REQUIRES: (1) Install nemoguardrails package, (2) Valid Emergent API key for LLM generation."
     - agent: "testing"
       message: "VERIFICATION COMPLETE - REQUESTED ITEMS TESTED: ✅ (1) Backend Health Check - WORKING: GET /api/health returns 200 OK with proper structure (mongo_docs=4, mongo_conversations=16, pinecone status, langfuse_configured=True). ✅ (2) BM25 Fallback - WORKING: BM25 keyword search returns 4 relevant contexts, BM25 index rebuilt from MongoDB on startup (confirmed in logs), system gracefully handles Pinecone unavailability. ✅ (3) Document Seeding - WORKING: POST /api/documents/seed successfully ingests 4 markdown documents, saves to MongoDB, works even when Pinecone fails. ⚠️ (4) Requirements Dependency Installation - PARTIALLY WORKING: nemoguardrails package IS installed (version 0.23.0 confirmed), BUT has configuration validation error. Backend logs show 'NeMo Guardrails initialization skipped or failed: 1 validation error for RailsConfig'. Root cause: config.yml references flows 'self check input' and 'self check output' that are NOT defined in rails.co file. REQUIRES: Fix NeMo Guardrails configuration by either defining missing flows or removing flow references from config.yml."
+    - agent: "testing"
+      message: "FINAL VERIFICATION (2026-08-06) - REVIEW REQUEST ITEMS: ✅ (1) Backend Endpoints - WORKING: All basic API endpoints (root, health, documents, conversations, evaluations, testset) return 200 OK with proper JSON structure. ✅ (2) Health Check - WORKING: GET /api/health returns 200 OK with mongo_docs=4, mongo_conversations=22, pinecone error (expected), langfuse_configured=True. ✅ (3) BM25 Fallback - WORKING: Document seeding successful, BM25 index rebuilt from MongoDB on startup (confirmed in logs at 17:13:40), system gracefully handles Pinecone unavailability. ❌ (4) NeMo Guardrails Configuration Loading - CRITICAL FAILURE: NeMo Guardrails package installed (v0.23.0) and config files load, BUT config.yml doesn't specify custom API endpoint. NeMo tries to call default OpenAI endpoint (https://api.openai.com/v1) instead of Emergent endpoint, causing LLMCallException with 401 error. This exception is NOT caught in guardrails.py, causing ALL /api/query requests to return 500 errors. BLOCKING: All query operations are blocked by this issue. FIX REQUIRED: Update config.yml to specify Emergent API endpoint OR add LLMCallException to exception handling OR disable NeMo Guardrails."
