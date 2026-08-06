@@ -41,4 +41,4 @@ pypdf==5.1.0
 tiktoken==0.8.0
 datasets==3.2.0
 openai==1.99.9
-nemoguardrails==0.8.0
+nemoguardrails>=0.23.0

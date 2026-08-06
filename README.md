@@ -2,7 +2,7 @@
 
 > **The eval-first RAG.** Retrieval-augmented generation over your document corpus, with **RAGAS metrics you can point to** instead of vibes.
 
-An end-to-end RAG system built to answer the question that most RAG demos dodge: *"is your answer actually right, and did you actually retrieve the right stuff?"* Hybrid dense + BM25 retrieval, grounded generation with inline `[chunk N]` citations, RAGAS-scored faithfulness / answer relevancy / context precision, Langfuse traces for every query, and a live dashboard that plots your metrics over time.
+An end-to-end RAG system built to answer the question that most RAG demos dodge: *"is your answer actually right, and did you actually retrieve the right stuff?"* Hybrid dense + BM25 retrieval, grounded generation with inline `[chunk N]` citations, RAGAS-scored faithfulness / answer relevancy / context precision, Langfuse traces for every query, NeMo Guardrails safety validation, and a live dashboard that plots your metrics over time.
 
 ![python](https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white)
 ![fastapi](https://img.shields.io/badge/fastapi-0.110-009688?logo=fastapi&logoColor=white)
@@ -14,9 +14,7 @@ An end-to-end RAG system built to answer the question that most RAG demos dodge:
 
 ---
 
-## Getting Started: Hybrid Local Development (Recommended)
-
-To develop locally with hot-reload enabled on your PC while keeping MongoDB cleanly isolated in Docker:
+## Getting Started: Hybrid Local Development
 
 ### 1) Clone & Configure Environment
 ```bash
@@ -35,7 +33,7 @@ docker compose up -d mongo
 ```
 *(This leaves your local port 27017 untouched and runs Mongo on port 27018)*
 
-### 3) Start Backend (FastAPI)
+### 3) Install Dependencies & Start Backend (FastAPI)
 In Terminal 1:
 ```bash
 cd backend
@@ -70,29 +68,23 @@ Open **http://localhost:3000** in your browser!
 .
 ├── backend/
 │   ├── server.py              # FastAPI app (all routes under /api)
+│   ├── config/                # NeMo Guardrails (config.yml, rails.co)
 │   ├── rag/
 │   │   ├── llm_client.py      # OpenAI + local HF embeddings
 │   │   ├── chunker.py         # RecursiveCharacterTextSplitter
 │   │   ├── vector_store.py    # Pinecone + BM25 + Reciprocal Rank Fusion
-│   │   ├── generator.py       # grounding prompt with [chunk N] citation enforcement
+│   │   ├── generator.py       # grounded prompt with citations + guardrails
+│   │   ├── guardrails.py      # NeMo Guardrails wrapper
 │   │   ├── evaluator.py       # RAGAS wrapper
 │   │   ├── observability.py   # Langfuse traces + scores
 │   │   └── ingest.py          # parse → chunk → embed → upsert → rebuild BM25
 │   ├── seed_docs/             # 4 sample policy/manual markdown files
 │   │   └── test_set.py        # 8-item golden Q&A set
 │   ├── tests/                 # pytest suite
-│   ├── requirements.txt
+│   ├── requirements.txt       # Fixed version compatibility (nemoguardrails>=0.23.0)
 │   └── env.example.txt
-├── frontend/
-│   ├── src/
-│   │   ├── App.js
-│   │   ├── lib/api.js         # axios wrapper
-│   │   └── components/        # Sidebar, ChatPanel, DocumentsPanel, EvalDashboard, HistoryPanel, CitedText
-│   ├── package.json
-│   ├── env.example.txt
-│   └── .gitignore
+├── frontend/                  # React 19 + Tailwind + shadcn/ui
 ├── docker-compose.yml         # Isolated MongoDB service on port 27018
-├── design_guidelines.json
 └── LICENSE
 ```
 

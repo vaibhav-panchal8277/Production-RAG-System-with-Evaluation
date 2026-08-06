@@ -62,7 +62,7 @@
 # END - Testing Protocol - DO NOT EDIT OR REMOVE THIS SECTION
 #====================================================================================================
 
-user_problem_statement: "Verify backend API endpoints, health check, guardrails input validation, and LLM generation."
+user_problem_statement: "Verify backend health check, BM25 fallback, document seeding, and requirements dependency installation."
 
 backend:
   - task: "MongoDB Connection Configuration"
@@ -94,12 +94,15 @@ backend:
         - working: true
           agent: "testing"
           comment: "✅ RE-VERIFIED: All basic endpoints working correctly. Health check returns proper structure with mongo_docs=4, mongo_conversations=10, pinecone error (expected with test key), langfuse_configured=true. All list endpoints return proper JSON arrays."
+        - working: true
+          agent: "testing"
+          comment: "✅ RE-VERIFIED AGAIN: Backend health check endpoint FULLY WORKING. GET /api/health returns 200 OK with proper structure: mongo_docs=4, mongo_conversations=16, pinecone={'error': 'Pinecone unavailable (Pinecone client is not initialized or API key is invalid.)'}, langfuse_configured=True. All other basic endpoints (root, documents, conversations, evaluations, testset) return 200 OK with proper JSON structure."
   
   - task: "Guardrails Input Validation"
     implemented: true
     working: false
-    file: "backend/rag/guardrails.py, backend/rag/generator.py"
-    stuck_count: 1
+    file: "backend/rag/guardrails.py, backend/rag/generator.py, backend/config/config.yml, backend/config/rails.co"
+    stuck_count: 2
     priority: "high"
     needs_retesting: false
     status_history:
@@ -112,6 +115,9 @@ backend:
         - working: false
           agent: "testing"
           comment: "❌ CRITICAL: NeMo Guardrails NOT installed. Backend logs show 'No module named nemoguardrails'. Package listed in requirements.txt (nemoguardrails==0.8.0) but not installed in Python environment. Config files exist (/app/backend/config/config.yml, rails.co) but guardrails.py fails to import NeMo. All guardrail tests FAILING: (1) Empty query returns generic LLM error instead of validation error, (2) Long query (2001 chars) returns generic LLM error instead of length validation, (3) Prompt injection returns generic LLM error instead of guardrail rejection. Previous test reports were INCORRECT - guardrails are NOT working."
+        - working: false
+          agent: "testing"
+          comment: "❌ REQUIREMENTS DEPENDENCY VERIFIED: nemoguardrails package IS installed (version 0.23.0 confirmed via pip list and python import). However, NeMo Guardrails has CONFIGURATION VALIDATION ERROR. Backend logs show 'NeMo Guardrails initialization skipped or failed: 1 validation error for RailsConfig'. Root cause: config.yml references flows 'self check input' and 'self check output' under rails.input.flows and rails.output.flows, but these flows are NOT defined in rails.co file. The rails.co only defines 'user express greeting', 'bot express greeting', 'user ask off topic', and 'bot express off topic'. All guardrail tests FAILING: (1) Empty query returns generic LLM error, (2) Long query (2001 chars) returns generic LLM error, (3) Prompt injection returns generic LLM error. REQUIRES: Either define the missing flows in rails.co or remove the flow references from config.yml."
   
   - task: "Pinecone Vector Store Integration"
     implemented: true
@@ -139,6 +145,9 @@ backend:
         - working: true
           agent: "testing"
           comment: "✅ Document seeding with BM25 fallback WORKING CORRECTLY. Test results: (1) POST /api/documents/seed successfully ingested 4 markdown documents (data_retention_standard.md, incident_response_runbook.md, remote_work_policy.md, widget_3000_manual.md) with 4, 3, 4, and 4 chunks respectively. (2) Documents saved to MongoDB successfully. (3) BM25 index rebuilt from MongoDB after ingestion. (4) BM25 keyword search (mode='keyword') returns relevant contexts (4 contexts for query 'What is RAG evaluation?'). (5) System gracefully handles Pinecone unavailability - logs show 'Pinecone upsert skipped' warnings but ingestion continues. (6) Hybrid search falls back to BM25 when Pinecone unavailable. CONCLUSION: BM25 fallback mechanism is fully functional and allows the system to operate without Pinecone."
+        - working: true
+          agent: "testing"
+          comment: "✅ RE-VERIFIED: Document seeding with BM25 fallback FULLY WORKING. (1) POST /api/documents/seed returns 200 OK and successfully ingests 4 markdown documents. (2) Documents saved to MongoDB (confirmed via GET /api/documents showing 4 documents). (3) BM25 index rebuilt from MongoDB on startup (confirmed in backend logs: 'BM25 index rebuilt from Mongo'). (4) BM25 keyword search (mode='keyword') returns 4 relevant contexts with proper scoring. (5) System gracefully handles Pinecone unavailability - backend logs show 'Pinecone upsert skipped' warnings but ingestion completes successfully. (6) Hybrid search mode falls back to BM25 when Pinecone unavailable. CONCLUSION: BM25 fallback mechanism is fully operational and robust."
   
   - task: "LLM Generation via Emergent API"
     implemented: true
@@ -162,14 +171,15 @@ frontend: []
 
 metadata:
   created_by: "testing_agent"
-  version: "1.4"
-  test_sequence: 5
+  version: "1.5"
+  test_sequence: 6
   run_ui: false
 
 test_plan:
   current_focus:
+    - "Backend API Endpoints - Basic"
     - "Document Seeding with BM25 Fallback"
-    - "LLM Generation via Emergent API"
+    - "Guardrails Input Validation"
   stuck_tasks:
     - "LLM Generation via Emergent API"
     - "Guardrails Input Validation"
@@ -185,3 +195,5 @@ agent_communication:
       message: "COMPREHENSIVE BACKEND TESTING COMPLETED. ✅ WORKING: (1) All basic API endpoints verified (root, health, documents, conversations, evaluations, testset), (2) Document seeding with BM25 fallback fully functional - 4 documents ingested successfully, BM25 index rebuilt from MongoDB, keyword search returns relevant contexts, (3) All guardrails validation working (empty query, long query, prompt injection detection), (4) Health check returns proper structure with mongo stats and service status. ❌ FAILING: (1) LLM Generation - Emergent API returns 404 'fault filter abort' due to invalid test key 'sk_test_emergent', (2) Pinecone integration - invalid test key 'pc_test_key' but system gracefully falls back to BM25. CRITICAL FINDING: BM25 fallback mechanism is fully operational - system can function without Pinecone for document ingestion and retrieval. Only LLM generation requires fixing (valid Emergent API key needed)."
     - agent: "testing"
       message: "CRITICAL FINDINGS - RE-TESTING REVEALED MAJOR ISSUES: ❌ NeMo Guardrails NOT INSTALLED - Package listed in requirements.txt but not in Python environment. Backend logs show 'No module named nemoguardrails'. Config files exist but guardrails.py import fails. ALL GUARDRAIL TESTS FAILING - empty query, long query, and prompt injection tests all return generic LLM errors instead of validation errors. Previous test reports claiming guardrails were working were INCORRECT. ❌ LLM Generation still failing with 404 'fault filter abort' from Emergent API (invalid test key). ✅ WORKING: Backend health, document seeding with BM25 fallback, BM25 keyword search, all basic API endpoints, conversations list and individual retrieval. REQUIRES: (1) Install nemoguardrails package, (2) Valid Emergent API key for LLM generation."
+    - agent: "testing"
+      message: "VERIFICATION COMPLETE - REQUESTED ITEMS TESTED: ✅ (1) Backend Health Check - WORKING: GET /api/health returns 200 OK with proper structure (mongo_docs=4, mongo_conversations=16, pinecone status, langfuse_configured=True). ✅ (2) BM25 Fallback - WORKING: BM25 keyword search returns 4 relevant contexts, BM25 index rebuilt from MongoDB on startup (confirmed in logs), system gracefully handles Pinecone unavailability. ✅ (3) Document Seeding - WORKING: POST /api/documents/seed successfully ingests 4 markdown documents, saves to MongoDB, works even when Pinecone fails. ⚠️ (4) Requirements Dependency Installation - PARTIALLY WORKING: nemoguardrails package IS installed (version 0.23.0 confirmed), BUT has configuration validation error. Backend logs show 'NeMo Guardrails initialization skipped or failed: 1 validation error for RailsConfig'. Root cause: config.yml references flows 'self check input' and 'self check output' that are NOT defined in rails.co file. REQUIRES: Fix NeMo Guardrails configuration by either defining missing flows or removing flow references from config.yml."
