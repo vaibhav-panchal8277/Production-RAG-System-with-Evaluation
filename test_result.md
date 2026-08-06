@@ -62,34 +62,25 @@
 # END - Testing Protocol - DO NOT EDIT OR REMOVE THIS SECTION
 #====================================================================================================
 
-user_problem_statement: "Verify all configuration files, docker-compose.yml, requirements.txt, .env.example, and backend modules are present and valid."
+user_problem_statement: "Verify backend API endpoints, health check, guardrails input validation, and LLM generation."
 
 backend:
-  - task: "Configuration Files Verification"
+  - task: "MongoDB Connection Configuration"
     implemented: true
     working: true
-    file: "docker-compose.yml, backend/requirements.txt, backend/.env.example, frontend/.env.example"
+    file: "backend/.env"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
+        - working: false
+          agent: "testing"
+          comment: "❌ MongoDB connection failing - backend/.env configured with wrong port (27018) but MongoDB running on 27017. All database operations returning 500 errors."
         - working: true
           agent: "testing"
-          comment: "✅ All configuration files verified and valid: docker-compose.yml (valid service definitions), backend/requirements.txt (all dependencies present), backend/.env.example (valid template), frontend/.env.example (valid template), backend/.env (properly configured), frontend/.env (created from .env.example)."
+          comment: "✅ FIXED: Updated MONGO_URL from mongodb://localhost:27018 to mongodb://localhost:27017. Backend restarted successfully, BM25 index rebuilt from MongoDB."
   
-  - task: "Backend Modules Verification"
-    implemented: true
-    working: true
-    file: "backend/rag/"
-    stuck_count: 0
-    priority: "high"
-    needs_retesting: false
-    status_history:
-        - working: true
-          agent: "testing"
-          comment: "✅ All backend modules verified and valid: rag/__init__.py, rag/chunker.py, rag/evaluator.py, rag/generator.py, rag/ingest.py, rag/llm_client.py, rag/observability.py, rag/vector_store.py. All modules are properly structured with correct imports and implementations."
-  
-  - task: "Backend Service Status"
+  - task: "Backend API Endpoints - Basic"
     implemented: true
     working: true
     file: "backend/server.py"
@@ -99,36 +90,66 @@ backend:
     status_history:
         - working: true
           agent: "testing"
-          comment: "✅ Backend service running successfully on port 8001 via supervisor. Health endpoint returns 200 OK. BM25 index rebuilt successfully on startup."
+          comment: "✅ All basic API endpoints working: GET /api/ (root), GET /api/health (returns mongo stats, pinecone status, langfuse config), GET /api/documents, GET /api/conversations, GET /api/evaluations, GET /api/testset. All return 200 OK with proper JSON structure."
   
-  - task: "Docker and Test Configuration"
+  - task: "Guardrails Input Validation"
     implemented: true
     working: true
-    file: "backend/Dockerfile, backend/pytest.ini"
+    file: "backend/rag/guardrails.py, backend/rag/generator.py"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
         - working: true
           agent: "testing"
-          comment: "✅ Backend Dockerfile valid with Python 3.11-slim base, proper dependency installation. pytest.ini configured with xdist for parallel testing (2 workers, loadscope distribution)."
+          comment: "✅ All guardrails validation working correctly: (1) Empty query validation - rejects with 'Query cannot be empty', (2) Long query validation - rejects queries >2000 chars with 'Query exceeds maximum allowed length', (3) Prompt injection detection - rejects queries with patterns like 'ignore all previous instructions' with 'Query flagged by guardrails: potential prompt injection detected'."
+  
+  - task: "Pinecone Vector Store Integration"
+    implemented: true
+    working: false
+    file: "backend/rag/vector_store.py, backend/.env"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: false
+          agent: "testing"
+          comment: "❌ Pinecone integration failing with 401 Unauthorized - Invalid API key. Test key 'pc_test_key' in backend/.env is not valid. This causes: (1) POST /api/documents/seed returns 500 error when trying to ingest documents, (2) Vector search operations fail. Error: 'pinecone.openapi_support.exceptions.UnauthorizedException: (401) Reason: Unauthorized, HTTP response body: Invalid API key'. Pinecone is required for document ingestion and dense/hybrid search modes."
+  
+  - task: "LLM Generation via Emergent API"
+    implemented: true
+    working: false
+    file: "backend/rag/generator.py, backend/rag/llm_client.py, backend/.env"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: false
+          agent: "testing"
+          comment: "❌ LLM generation failing - Emergent LLM API returns 404 Not Found with error 'fault filter abort'. Configuration: EMERGENT_LLM_KEY=sk_test_emergent, OPENAI_API_BASE=https://integrations.emergentagent.com/v1, LLM_MODEL=gpt-4o-mini. API call to POST https://integrations.emergentagent.com/v1/chat/completions returns 404. Test query returns: 'I encountered an error while generating the answer. Please try again.' Issue likely due to: (1) Invalid test API key 'sk_test_emergent', or (2) Incorrect endpoint URL (should be /llm instead of /v1 based on Emergent docs). Requires valid Emergent API key or correct endpoint configuration."
 
 frontend: []
 
 metadata:
   created_by: "testing_agent"
-  version: "1.1"
-  test_sequence: 2
+  version: "1.2"
+  test_sequence: 3
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Configuration Files Verification"
-    - "Backend Modules Verification"
-  stuck_tasks: []
+    - "Backend API Endpoints - Basic"
+    - "Guardrails Input Validation"
+    - "LLM Generation via Emergent API"
+    - "Pinecone Vector Store Integration"
+  stuck_tasks:
+    - "Pinecone Vector Store Integration"
+    - "LLM Generation via Emergent API"
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
     - agent: "testing"
       message: "Configuration verification completed successfully. All required files present and valid. Created missing frontend/.env from .env.example. All services running properly (backend, frontend, mongodb). Backend modules properly structured and functional."
+    - agent: "testing"
+      message: "Backend API testing completed. FIXED: MongoDB connection issue (wrong port 27018→27017). WORKING: All basic API endpoints (root, health, documents, conversations, evaluations, testset) and all guardrails validation (empty query, long query, prompt injection). FAILING: (1) Pinecone integration - invalid test API key 'pc_test_key' causes 401 errors, blocks document seeding and vector search. (2) LLM generation - Emergent API returns 404 'fault filter abort', likely invalid test key 'sk_test_emergent' or wrong endpoint (/v1 should be /llm). Both require valid API keys or correct configuration to function."

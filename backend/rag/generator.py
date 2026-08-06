@@ -1,5 +1,12 @@
-"""Grounded answer generation with strict citations."""
+"""Grounded answer generation with strict citations and guardrails."""
+import logging
+
+from openai import OpenAIError
+
+from rag.guardrails import sanitize_output, validate_input
 from rag.llm_client import LLM_MODEL, get_openai
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a Retrieval-Augmented QA assistant answering questions about internal policy and technical documentation.
 
@@ -26,23 +33,29 @@ def build_user_prompt(query: str, contexts: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def generate_answer(query: str, contexts: list[dict]) -> dict:
+def generate_answer(query: str, contexts: list[dict]) -> tuple[str, str]:
+    # 1. Input guardrail validation
+    is_valid, err_msg = validate_input(query)
+    if not is_valid:
+        return err_msg, LLM_MODEL
+
     client = get_openai()
     user_prompt = build_user_prompt(query, contexts)
-    resp = client.chat.completions.create(
-        model=LLM_MODEL,
-        temperature=0,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-    )
-    answer = resp.choices[0].message.content or ""
-    usage = getattr(resp, "usage", None)
-    return {
-        "answer": answer,
-        "prompt": user_prompt,
-        "model": LLM_MODEL,
-        "prompt_tokens": getattr(usage, "prompt_tokens", 0) if usage else 0,
-        "completion_tokens": getattr(usage, "completion_tokens", 0) if usage else 0,
-    }
+
+    try:
+        resp = client.chat.completions.create(
+            model=LLM_MODEL,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        answer = resp.choices[0].message.content or ""
+    except (OpenAIError, RuntimeError, ConnectionError, ValueError) as e:
+        logger.error("LLM generation failed: %s", e)
+        answer = "I encountered an error while generating the answer. Please try again."
+
+    # 2. Output guardrail sanitization (PII filtering)
+    safe_answer = sanitize_output(answer)
+    return safe_answer, LLM_MODEL
