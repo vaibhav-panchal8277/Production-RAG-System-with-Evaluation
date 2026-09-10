@@ -113,8 +113,9 @@ _nemo_warned = False
 
 if ENABLE_NEMO_RAILS:
     try:
-        from nemoguardrails import LLMRails, RailsConfig  # type: ignore
         from pathlib import Path
+
+        from nemoguardrails import LLMRails, RailsConfig  # type: ignore
 
         _config_dir = Path(__file__).parent.parent / "config"
         _nemo_rails = LLMRails(RailsConfig.from_path(str(_config_dir)))

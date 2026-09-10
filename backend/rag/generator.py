@@ -68,7 +68,7 @@ def generate_answer(query: str, contexts: list[dict]) -> tuple[str, str]:
         if not answer:
             logger.warning("LLM returned an empty completion for query %r", query[:120])
             answer = NO_CONTEXT_ANSWER
-    except (OpenAIError, RuntimeError, ConnectionError, ValueError, TimeoutError) as e:
+    except (OpenAIError, RuntimeError, ConnectionError, ValueError, TimeoutError):
         # Log the full error server-side (model name / auth issues show up here),
         # return a generic message to the caller.
         logger.exception("LLM generation failed (model=%s)", LLM_MODEL)

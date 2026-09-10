@@ -34,7 +34,13 @@ from rag.guardrails import guardrails_status
 from rag.ingest import ingest_document, rebuild_bm25_from_db
 from rag.llm_client import provider_info
 from rag.observability import shutdown_tracing, trace_rag
-from rag.vector_store import bm25_search, bm25_size, dense_search, hybrid_search, index_stats
+from rag.vector_store import (
+    bm25_search,
+    bm25_size,
+    dense_search,
+    hybrid_search,
+    index_stats,
+)
 from seed_docs.test_set import TEST_SET
 
 # ---------- setup ----------
