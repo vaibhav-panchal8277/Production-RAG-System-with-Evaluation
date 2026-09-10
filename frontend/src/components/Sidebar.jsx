@@ -29,12 +29,15 @@ export default function Sidebar({ active, setActive, controls, setControls }) {
       {/* header */}
       <div className="px-5 pt-6 pb-4 border-b border-white/10">
         <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-neutral-500">
-          Emergent · Retrieval Lab
+          Retrieval Lab
         </div>
         <div className="font-heading text-[22px] font-black leading-none mt-1 text-white">
           rag/eval
         </div>
-        <div className="font-mono text-[10px] text-neutral-500 mt-2">v0.1 · gpt-5.4-mini</div>
+        {/* Model comes from /health so it can't drift from what the backend runs. */}
+        <div className="font-mono text-[10px] text-neutral-500 mt-2">
+          v0.1 · {h?.llm?.model ?? "…"}
+        </div>
       </div>
 
       {/* nav */}
@@ -131,8 +134,8 @@ export default function Sidebar({ active, setActive, controls, setControls }) {
       </div>
 
       <div className="px-5 py-3 border-t border-white/10 font-mono text-[10px] leading-relaxed text-neutral-600">
-        pinecone · minilm · ragas ·<br />
-        langfuse · fastapi
+        groq · pinecone · minilm ·<br />
+        ragas · langfuse · fastapi
       </div>
     </aside>
   );

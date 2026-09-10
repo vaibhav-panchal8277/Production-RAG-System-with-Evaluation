@@ -48,14 +48,17 @@ export default function EvalDashboard() {
     mutationFn: () => api.runEval({ scope, limit: parseInt(limit, 10) }),
     onSuccess: (r) => {
       setLatest(r);
-      toast.success(`Eval complete · ${r.aggregate.n_samples} samples`);
+      toast.success(`Eval complete · ${r?.aggregate?.n_samples ?? 0} samples`);
       qc.invalidateQueries({ queryKey: ["evals"] });
     },
     onError: (e) =>
       toast.error(e?.response?.data?.detail || e.message || "Eval failed"),
   });
 
+  // The run endpoint nests metrics under `aggregate`; historical runs from
+  // /evaluations are flat. Both shapes expose the same metric field names.
   const agg = latest?.aggregate || runs.data?.runs?.[0] || null;
+  const perRow = latest?.per_row || [];
 
   const chartData = (runs.data?.runs || [])
     .slice()
@@ -240,7 +243,7 @@ export default function EvalDashboard() {
       </div>
 
       {/* Per-row */}
-      {latest && (
+      {perRow.length > 0 && (
         <div className="p-8 border-b border-white/10">
           <div className="font-mono text-[10px] uppercase tracking-widest text-neutral-500 mb-4">
             Latest run · per-question scores
@@ -263,7 +266,7 @@ export default function EvalDashboard() {
               </tr>
             </thead>
             <tbody>
-              {latest.per_row.map((r, i) => (
+              {perRow.map((r, i) => (
                 <tr key={i} className="border-b border-white/5 hover:bg-white/[0.02]">
                   <td className="py-3 pr-6 text-white">{r.query}</td>
                   <td

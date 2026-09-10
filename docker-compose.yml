@@ -1,11 +1,15 @@
-version: "3.9"
-
+# Local stack: Mongo + FastAPI backend + static React frontend.
+#
+# Secrets (GROQ_API_KEY, PINECONE_API_KEY, LANGFUSE_*) come from backend/.env
+# via `env_file` — they are never written into this file, which is committed.
 services:
   mongo:
     image: mongo:7
     container_name: rag-eval-mongo
+    # Bound to loopback only: an unauthenticated Mongo must not be reachable
+    # from the local network.
     ports:
-      - "27018:27017"
+      - "127.0.0.1:27018:27017"
     volumes:
       - mongo_data:/data/db
     healthcheck:
@@ -27,29 +31,30 @@ services:
     environment:
       MONGO_URL: mongodb://mongo:27017
       DB_NAME: rag_eval
-      CORS_ORIGINS: "*"
+      # Explicit origins, never "*": a wildcard plus credentials is rejected by
+      # browsers and lets any page on the internet call this API.
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:8501"
+      # Set RAG_API_KEY in backend/.env to require X-API-Key on mutating routes.
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     volumes:
-      - ./backend:/app
-      - hf_cache:/root/.cache/huggingface
+      # Model cache only — the app code is baked into the image so the
+      # container runs what was built and tested.
+      - hf_cache:/home/appuser/.cache/huggingface
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # CRA bakes these into the bundle at build time.
+        REACT_APP_BACKEND_URL: ${REACT_APP_BACKEND_URL:-http://localhost:8001}
+        REACT_APP_RAG_API_KEY: ${RAG_API_KEY:-}
     container_name: rag-eval-frontend
     depends_on:
       - backend
-    environment:
-      REACT_APP_BACKEND_URL: http://localhost:8001
-      WDS_SOCKET_PORT: 3000
-      CHOKIDAR_USEPOLLING: "true"
     ports:
-      - "3000:3000"
-    volumes:
-      - ./frontend/src:/app/src
-      - ./frontend/public:/app/public
+      - "127.0.0.1:3000:3000"
 
 volumes:
   mongo_data:

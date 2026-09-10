@@ -44,6 +44,10 @@ def is_refusal(text: str) -> bool:
 def s():
     ses = requests.Session()
     ses.headers.update({"Content-Type": "application/json"})
+    # Only meaningful when the server runs with RAG_API_KEY set; harmless otherwise.
+    api_key = (os.environ.get("RAG_API_KEY") or "").strip()
+    if api_key:
+        ses.headers.update({"X-API-Key": api_key})
     return ses
 
 

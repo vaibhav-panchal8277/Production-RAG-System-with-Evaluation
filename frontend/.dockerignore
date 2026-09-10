@@ -1,0 +1,15 @@
+# Build context is ./frontend, so the repo-root .dockerignore does NOT apply.
+# node_modules must be excluded or the host's (possibly wrong-platform) tree
+# shadows the one `yarn install` builds inside the image.
+node_modules
+build
+coverage
+
+.env
+.env.*
+
+.git
+.gitignore
+npm-debug.log*
+yarn-error.log*
+.DS_Store

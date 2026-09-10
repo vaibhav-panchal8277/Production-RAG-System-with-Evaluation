@@ -1,14 +1,23 @@
-"""Streamlit frontend for the RAG Evaluation System."""
+"""Streamlit frontend for the RAG Evaluation System.
+
+Security note: every piece of dynamic content (model answers, chunk text,
+document names) is passed through `html.escape()` before it reaches a
+`unsafe_allow_html=True` block. Chunk text originates from user-uploaded
+documents, so interpolating it raw was a stored-XSS vector.
+"""
+import html
 import os
-import time
-import requests
+from urllib.parse import quote
+
 import pandas as pd
+import requests
 import streamlit as st
 
 # ============ CONFIG ============
 BACKEND = os.environ.get("BACKEND_INTERNAL_URL", "http://localhost:8001")
 API = f"{BACKEND}/api"
 LANGFUSE_UI = os.environ.get("LANGFUSE_HOST", "https://us.cloud.langfuse.com")
+API_KEY = (os.environ.get("RAG_API_KEY") or "").strip()
 
 st.set_page_config(
     page_title="RAG Evaluation Lab",
@@ -40,10 +49,10 @@ h1, h2, h3, .st-emotion-cache-10trblm { font-family: "Fraunces", "IBM Plex Serif
 .metric-label { font-size: 12px; letter-spacing:.08em; text-transform:uppercase; color:#7a7570; }
 .metric-value { font-size: 30px; font-weight: 600; margin-top: 4px; font-family:"Fraunces",serif; }
 .chunk-card { border-left: 3px solid var(--accent); background:#fff; border-radius: 10px;
-    padding: 12px 16px; margin: 8px 0; font-size: 14px; }
+    padding: 12px 16px; margin: 8px 0; font-size: 14px; white-space: pre-wrap; }
 .chunk-src { font-size: 11px; text-transform:uppercase; letter-spacing:.06em; color:#7a7570; }
 .answer-box { background:#111214; color:#f6f2ea; padding: 18px 22px; border-radius: 12px;
-    line-height: 1.55; font-size: 15px; }
+    line-height: 1.55; font-size: 15px; white-space: pre-wrap; }
 .answer-box code, .answer-box strong { color: var(--accent-2); }
 .badge { display:inline-block; padding: 2px 10px; border-radius: 999px;
     background:#1a1b1d; color:#f6f2ea; font-size: 11px; letter-spacing:.05em; margin-right:6px; }
@@ -67,34 +76,43 @@ input, textarea { border-radius: 10px !important; }
 
 
 # ============ API HELPERS ============
+def _headers() -> dict:
+    return {"X-API-Key": API_KEY} if API_KEY else {}
+
+
 def api_get(path, **params):
-    r = requests.get(f"{API}{path}", params=params, timeout=60)
+    r = requests.get(f"{API}{path}", params=params, timeout=60, headers=_headers())
     r.raise_for_status()
     return r.json()
 
 
 def api_post(path, json=None, files=None):
-    r = requests.post(f"{API}{path}", json=json, files=files, timeout=300)
+    r = requests.post(
+        f"{API}{path}", json=json, files=files, timeout=600, headers=_headers()
+    )
     r.raise_for_status()
     return r.json()
 
 
 def api_delete(path):
-    r = requests.delete(f"{API}{path}", timeout=60)
+    r = requests.delete(f"{API}{path}", timeout=60, headers=_headers())
     r.raise_for_status()
     return r.json()
 
 
-def score_badge(v):
-    if v is None:
-        return '<span class="badge">n/a</span>'
-    if v >= 0.8:
-        klass = "ok"
-    elif v >= 0.6:
-        klass = "warn"
-    else:
-        klass = "err"
-    return f'<span class="badge {klass}">{v:.2f}</span>'
+def err_text(e: Exception) -> str:
+    """Human-readable error, preferring the API's `detail` field."""
+    resp = getattr(e, "response", None)
+    if resp is not None:
+        try:
+            return str(resp.json().get("detail", resp.text))[:400]
+        except ValueError:
+            return (resp.text or str(e))[:400]
+    return str(e)[:400]
+
+
+def fmt_metric(v) -> str:
+    return "—" if v is None else f"{v:.2f}"
 
 
 # ============ SIDEBAR ============
@@ -102,25 +120,39 @@ with st.sidebar:
     st.markdown("### RAG Evaluation Lab")
     st.caption("Retrieval + generation with faithfulness scores you can actually point to.")
     st.markdown("---")
+    health = None
     try:
-        h = api_get("/health")
-        st.markdown(f"**Vector store**  \n{h['pinecone'].get('total_vectors', 0)} vectors indexed")
-        st.markdown(f"**Documents**: {h['mongo_docs']}")
-        st.markdown(f"**Conversations**: {h['mongo_conversations']}")
-        lf = "connected" if h["langfuse_configured"] else "not configured"
+        health = api_get("/health")
+        pc = health.get("pinecone") or {}
+        st.markdown(f"**Vector store**  \n{pc.get('total_vectors', 0)} vectors indexed")
+        if pc.get("error"):
+            st.caption(f"⚠️ {pc['error']}")
+        st.markdown(f"**BM25 chunks**: {health.get('bm25_chunks', 0)}")
+        st.markdown(f"**Documents**: {health.get('mongo_docs', 0)}")
+        st.markdown(f"**Conversations**: {health.get('mongo_conversations', 0)}")
+        lf = "connected" if health.get("langfuse_configured") else "not configured"
         st.markdown(f"**Langfuse**: {lf}")
+        if health.get("auth_required") and not API_KEY:
+            st.warning("Backend requires an API key. Set RAG_API_KEY for this app.")
     except Exception as e:
-        st.error(f"Backend not reachable: {e}")
+        st.error(f"Backend not reachable: {err_text(e)}")
 
     st.markdown("---")
     if st.button("Seed sample documents", key="btn-seed"):
-        with st.spinner("Ingesting sample corpus..."):
-            res = api_post("/documents/seed")
-        st.success(f"Seeded {len(res['ingested'])} documents")
-        st.rerun()
+        try:
+            with st.spinner("Ingesting sample corpus..."):
+                res = api_post("/documents/seed")
+            st.success(f"Seeded {len(res['ingested'])} documents")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Seed failed: {err_text(e)}")
 
     st.markdown("---")
-    st.caption("Emergent proxy · OpenAI gpt-5.4-mini · MiniLM embeddings (local) · Pinecone · Langfuse · RAGAS")
+    llm = (health or {}).get("llm") or {}
+    st.caption(
+        f"Groq · {llm.get('model', 'openai/gpt-oss-120b')} · "
+        f"MiniLM embeddings (local) · Pinecone · Langfuse · RAGAS"
+    )
 
 
 # ============ HEADER ============
@@ -161,43 +193,57 @@ with tab_chat:
         submit = st.button("Ask", key="ask-btn", use_container_width=True)
 
     if submit and query.strip():
+        res = None
         try:
             with st.spinner("Retrieving & generating..."):
-                res = api_post("/query", json={"query": query.strip(), "top_k": top_k, "mode": mode})
-        except requests.HTTPError as e:
-            try:
-                st.error(e.response.json().get("detail", str(e)))
-            except Exception:
-                st.error(str(e))
-            res = None
+                res = api_post(
+                    "/query",
+                    json={"query": query.strip(), "top_k": top_k, "mode": mode},
+                )
         except Exception as e:
-            st.error(str(e))
-            res = None
+            st.error(err_text(e))
 
         if res:
-            st.markdown(f'<div class="answer-box">{res["answer"]}</div>', unsafe_allow_html=True)
+            # escape(): the answer is model output and must never be treated as markup
+            st.markdown(
+                f'<div class="answer-box">{html.escape(res.get("answer", ""))}</div>',
+                unsafe_allow_html=True,
+            )
             meta_col1, meta_col2, meta_col3, meta_col4 = st.columns(4)
-            meta_col1.markdown(f'<span class="badge">mode: {res["mode"]}</span>', unsafe_allow_html=True)
-            meta_col2.markdown(f'<span class="badge">latency: {res["latency_ms"]} ms</span>', unsafe_allow_html=True)
-            meta_col3.markdown(f'<span class="badge">model: {res["model"]}</span>', unsafe_allow_html=True)
+            meta_col1.markdown(
+                f'<span class="badge">mode: {html.escape(str(res.get("mode", "")))}</span>',
+                unsafe_allow_html=True,
+            )
+            meta_col2.markdown(
+                f'<span class="badge">latency: {int(res.get("latency_ms") or 0)} ms</span>',
+                unsafe_allow_html=True,
+            )
+            meta_col3.markdown(
+                f'<span class="badge">model: {html.escape(str(res.get("model", "")))}</span>',
+                unsafe_allow_html=True,
+            )
             if res.get("trace_id"):
                 meta_col4.markdown(
-                    f'<a href="{LANGFUSE_UI}" target="_blank" style="text-decoration:none;"><span class="badge ok">Langfuse trace ↗</span></a>',
+                    f'<a href="{html.escape(LANGFUSE_UI)}" target="_blank" rel="noopener noreferrer" '
+                    f'style="text-decoration:none;"><span class="badge ok">Langfuse trace ↗</span></a>',
                     unsafe_allow_html=True,
                 )
 
             st.markdown("### Retrieved context")
-            for i, c in enumerate(res["contexts"], 1):
-                src = c.get("source") or "unknown"
-                section = c.get("section") or ""
+            for i, c in enumerate(res.get("contexts") or [], 1):
+                meta = c.get("metadata") or {}
+                src = c.get("source") or meta.get("source") or "unknown"
+                section = c.get("section") or meta.get("section") or ""
                 score = c.get("score")
                 header = f"[chunk {i}] {src}"
                 if section:
                     header += f" · {section}"
-                if score is not None:
+                if isinstance(score, (int, float)):
                     header += f" · score={score:.3f}"
+                # escape(): chunk text comes from uploaded documents
                 st.markdown(
-                    f'<div class="chunk-card"><div class="chunk-src">{header}</div>{c["text"]}</div>',
+                    f'<div class="chunk-card"><div class="chunk-src">{html.escape(header)}</div>'
+                    f"{html.escape(c.get('text', ''))}</div>",
                     unsafe_allow_html=True,
                 )
 
@@ -211,24 +257,39 @@ with tab_docs:
             with st.spinner("Chunking, embedding, upserting to Pinecone..."):
                 files = {"file": (up.name, up.getvalue(), up.type or "application/octet-stream")}
                 try:
-                    r = requests.post(f"{API}/documents/upload", files=files, timeout=300)
+                    r = requests.post(
+                        f"{API}/documents/upload",
+                        files=files,
+                        timeout=600,
+                        headers=_headers(),
+                    )
                     r.raise_for_status()
-                    st.success(f"Ingested {r.json().get('n_chunks',0)} chunks from {up.name}")
+                    data = r.json()
+                    st.success(f"Ingested {data.get('n_chunks', 0)} chunks from {up.name}")
+                    if data.get("warning"):
+                        st.warning(data["warning"])
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Failed: {e}")
+                    st.error(f"Failed: {err_text(e)}")
 
         st.markdown("#### Or use the sample corpus")
         st.caption("Ships with 4 example docs: HR remote-work policy, data-retention standard, Widget-3000 tech manual, incident-response runbook.")
         if st.button("Seed sample corpus", key="seed-btn-2"):
-            with st.spinner("Seeding..."):
-                api_post("/documents/seed")
-            st.success("Done")
-            st.rerun()
+            try:
+                with st.spinner("Seeding..."):
+                    api_post("/documents/seed")
+                st.success("Done")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Seed failed: {err_text(e)}")
 
     with list_col:
         st.markdown("#### Indexed documents")
-        docs = api_get("/documents")["documents"]
+        try:
+            docs = api_get("/documents")["documents"]
+        except Exception as e:
+            docs = []
+            st.error(f"Could not load documents: {err_text(e)}")
         if not docs:
             st.info("No documents indexed yet. Upload one or seed the sample corpus.")
         else:
@@ -237,9 +298,13 @@ with tab_docs:
             st.dataframe(df[cols_order], use_container_width=True, hide_index=True)
             del_source = st.selectbox("Remove document", [""] + [d["source"] for d in docs], key="del-select")
             if del_source and st.button(f"Delete {del_source}", key="del-btn"):
-                api_delete(f"/documents/{del_source}")
-                st.success("Deleted")
-                st.rerun()
+                try:
+                    # quote(): filenames may contain spaces or reserved characters
+                    api_delete(f"/documents/{quote(del_source, safe='')}")
+                    st.success("Deleted")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Delete failed: {err_text(e)}")
 
 # ============ EVALUATION TAB ============
 with tab_eval:
@@ -249,7 +314,7 @@ with tab_eval:
         scope = st.selectbox(
             "Scope",
             ["testset", "recent"],
-            format_func=lambda s: "Golden test-set (8 Q&A)" if s == "testset" else "Last N user queries",
+            format_func=lambda s: "Golden test-set" if s == "testset" else "Last N user queries",
             key="scope-select",
         )
     with ec2:
@@ -260,38 +325,32 @@ with tab_eval:
         run_btn = st.button("Run RAGAS evaluation", key="eval-run-btn", use_container_width=True)
 
     if run_btn:
-        with st.spinner("Running Faithfulness · Answer Relevancy · Context Precision (this may take 30–90s)…"):
+        res = None
+        with st.spinner("Running Faithfulness · Answer Relevancy · Context Precision (this may take a while)…"):
             try:
                 res = api_post("/evaluations/run", json={"scope": scope, "limit": int(limit)})
             except Exception as e:
-                st.error(f"Eval failed: {e}")
-                res = None
+                st.error(f"Eval failed: {err_text(e)}")
         if res:
-            agg = res["aggregate"]
+            agg = res.get("aggregate") or {}
             m1, m2, m3, m4 = st.columns(4)
-            m1.markdown(
-                f'<div class="metric-card"><div class="metric-label">Faithfulness</div>'
-                f'<div class="metric-value">{(agg["faithfulness"] or 0):.2f}</div></div>',
-                unsafe_allow_html=True,
-            )
-            m2.markdown(
-                f'<div class="metric-card"><div class="metric-label">Answer Relevancy</div>'
-                f'<div class="metric-value">{(agg["answer_relevancy"] or 0):.2f}</div></div>',
-                unsafe_allow_html=True,
-            )
-            m3.markdown(
-                f'<div class="metric-card"><div class="metric-label">Context Precision</div>'
-                f'<div class="metric-value">{(agg["context_precision"] or 0):.2f}</div></div>',
-                unsafe_allow_html=True,
-            )
+            for col, label, key in (
+                (m1, "Faithfulness", "faithfulness"),
+                (m2, "Answer Relevancy", "answer_relevancy"),
+                (m3, "Context Precision", "context_precision"),
+            ):
+                col.markdown(
+                    f'<div class="metric-card"><div class="metric-label">{label}</div>'
+                    f'<div class="metric-value">{fmt_metric(agg.get(key))}</div></div>',
+                    unsafe_allow_html=True,
+                )
             m4.markdown(
                 f'<div class="metric-card"><div class="metric-label">Samples · Duration</div>'
-                f'<div class="metric-value">{agg["n_samples"]} · {agg["duration_s"]}s</div></div>',
+                f'<div class="metric-value">{agg.get("n_samples", 0)} · {agg.get("duration_s", 0)}s</div></div>',
                 unsafe_allow_html=True,
             )
             st.markdown("### Per-question scores")
-            df = pd.DataFrame(res["per_row"])
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(res.get("per_row") or []), use_container_width=True, hide_index=True)
 
     st.markdown("---")
     st.markdown("#### Historical eval runs")
@@ -303,28 +362,37 @@ with tab_eval:
         st.info("No evaluations yet. Run one above.")
     else:
         rdf = pd.DataFrame(runs)
-        # keep only summary columns
         keep = [c for c in ["created_at", "scope", "n_samples", "faithfulness",
                             "answer_relevancy", "context_precision", "duration_s"] if c in rdf.columns]
         st.dataframe(rdf[keep], use_container_width=True, hide_index=True)
 
-        # Trend chart
         if {"faithfulness", "answer_relevancy", "context_precision"}.issubset(rdf.columns):
             chart_df = rdf[["created_at", "faithfulness", "answer_relevancy", "context_precision"]].copy()
             chart_df["created_at"] = pd.to_datetime(chart_df["created_at"], errors="coerce")
-            chart_df = chart_df.sort_values("created_at").set_index("created_at")
-            st.markdown("### Metric trends")
-            st.line_chart(chart_df)
+            chart_df = chart_df.dropna(subset=["created_at"]).sort_values("created_at").set_index("created_at")
+            if not chart_df.empty:
+                st.markdown("### Metric trends")
+                st.line_chart(chart_df)
 
 # ============ HISTORY TAB ============
 with tab_history:
-    convs = api_get("/conversations", limit=50)["conversations"]
+    try:
+        convs = api_get("/conversations", limit=50)["conversations"]
+    except Exception as e:
+        convs = []
+        st.error(f"Could not load history: {err_text(e)}")
     if not convs:
         st.info("No queries yet. Head to the Chat tab.")
     else:
         for c in convs:
-            with st.expander(f"[{c.get('mode','?')}] {c['query'][:90]}   —   {c.get('latency_ms','?')} ms"):
-                st.markdown(f"**Answer:** {c['answer']}")
-                st.caption(f"model={c.get('model')} · created={c.get('created_at')} · trace_id={c.get('trace_id') or '—'}")
+            title = f"[{c.get('mode', '?')}] {(c.get('query') or '')[:90]}   —   {c.get('latency_ms', '?')} ms"
+            with st.expander(title):
+                # st.text(): renders model output literally, no markup interpretation
+                st.markdown("**Answer:**")
+                st.text(c.get("answer") or "")
+                st.caption(
+                    f"model={c.get('model')} · created={c.get('created_at')} · "
+                    f"trace_id={c.get('trace_id') or '—'}"
+                )
                 if c.get("trace_id"):
                     st.markdown(f"[Open in Langfuse ↗]({LANGFUSE_UI})")

@@ -1,4 +1,17 @@
+# NeMo Guardrails config — only loaded when ENABLE_NEMO_RAILS=true.
+#
+# The `openai` engine speaks the OpenAI-compatible protocol, which is exactly
+# what Groq serves, so pointing base_url at Groq is enough. NeMo reads the key
+# from OPENAI_API_KEY (not GROQ_API_KEY), so when enabling rails export:
+#
+#   export OPENAI_API_KEY="$GROQ_API_KEY"
+#   export OPENAI_BASE_URL="https://api.groq.com/openai/v1"
+#
+# Keep `model` in sync with LLM_MODEL in backend/.env.
 models:
   - type: main
     engine: openai
-    model: gpt-4o-mini
+    model: openai/gpt-oss-120b
+    parameters:
+      base_url: https://api.groq.com/openai/v1
+      temperature: 0

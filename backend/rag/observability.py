@@ -1,4 +1,10 @@
-"""Langfuse tracing wrapper — degrades gracefully if not configured."""
+"""Langfuse tracing wrapper — degrades gracefully if not configured.
+
+`lf.flush()` is a blocking network call. It used to run on every single query,
+adding upstream latency to the request path, so tracing is now fire-and-forget:
+the Langfuse SDK batches in a background thread and we only force a flush at
+shutdown (see `shutdown_tracing`).
+"""
 import logging
 import os
 from functools import lru_cache
@@ -27,7 +33,9 @@ def get_langfuse():
         return None
 
 
-def trace_rag(query: str, contexts: list[dict], answer: str, model: str, latency_ms: int) -> str | None:
+def trace_rag(
+    query: str, contexts: list[dict], answer: str, model: str, latency_ms: int
+) -> str | None:
     lf = get_langfuse()
     if not lf:
         return None
@@ -41,7 +49,16 @@ def trace_rag(query: str, contexts: list[dict], answer: str, model: str, latency
         trace.span(
             name="retrieve",
             input={"query": query},
-            output={"contexts": [{"source": c.get("metadata", {}).get("source"), "text": c["text"][:200]} for c in contexts]},
+            output={
+                "contexts": [
+                    {
+                        "source": c.get("source")
+                        or (c.get("metadata") or {}).get("source"),
+                        "text": (c.get("text") or "")[:200],
+                    }
+                    for c in contexts
+                ]
+            },
         )
         trace.generation(
             name="generate",
@@ -49,9 +66,9 @@ def trace_rag(query: str, contexts: list[dict], answer: str, model: str, latency
             input={"query": query, "n_contexts": len(contexts)},
             output=answer,
         )
-        lf.flush()
+        # No flush here — the SDK batches asynchronously.
         return trace.id
-    except (RuntimeError, ConnectionError) as e:
+    except (RuntimeError, ConnectionError, ValueError, AttributeError) as e:
         logger.debug("Langfuse trace failed: %s", e)
         return None
 
@@ -62,6 +79,16 @@ def score_trace(trace_id: str, name: str, value: float, comment: str = ""):
         return
     try:
         lf.score(trace_id=trace_id, name=name, value=float(value), comment=comment)
-        lf.flush()
-    except (RuntimeError, ConnectionError) as e:
+    except (RuntimeError, ConnectionError, ValueError, AttributeError) as e:
         logger.debug("Langfuse score failed for trace %s: %s", trace_id, e)
+
+
+def shutdown_tracing():
+    """Flush any buffered Langfuse events at process shutdown."""
+    lf = get_langfuse()
+    if not lf:
+        return
+    try:
+        lf.flush()
+    except (RuntimeError, ConnectionError, AttributeError) as e:
+        logger.debug("Langfuse flush on shutdown failed: %s", e)

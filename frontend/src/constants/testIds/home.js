@@ -2,5 +2,7 @@
 // in ./auth.js (keys camelCase, values kebab-case `<feature>-<element>`).
 
 export const HOME = {
-	emergentLink: 'home-emergent-link',
+	askInput: 'home-ask-input',
+	askSubmitButton: 'home-ask-submit-button',
+	answerPanel: 'home-answer-panel',
 };

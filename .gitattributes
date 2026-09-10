@@ -1,0 +1,19 @@
+# Normalize line endings so the repo stops showing every file as modified when
+# it is checked out on Windows. LF in the index AND in the working tree.
+* text=auto eol=lf
+
+# Binary / generated — never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.zip binary
+*.gz binary
+
+# Lockfiles are generated; keep them out of diff review noise.
+yarn.lock -diff linguist-generated
+package-lock.json -diff linguist-generated

@@ -1,0 +1,21 @@
+# Build context is ./backend, so the repo-root .dockerignore does NOT apply here.
+# Without this file `COPY . .` bakes backend/.env — the live Groq, Pinecone and
+# Langfuse credentials — into an image layer, where `docker history` can read it
+# back out. Secrets must arrive at runtime via env_file/secrets instead.
+.env
+.env.*
+!env.example.txt
+
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+tests
+.git
+.gitignore
+*.md
+!seed_docs/*.md

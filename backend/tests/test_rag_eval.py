@@ -18,11 +18,17 @@ import requests
 
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 
+# Mutating routes require X-API-Key only when the server has RAG_API_KEY set.
+# Sending it unconditionally keeps the suite green in both configurations.
+API_KEY = (os.environ.get("RAG_API_KEY") or "").strip()
+
 
 @pytest.fixture(scope="module")
 def s():
     ses = requests.Session()
     ses.headers.update({"Content-Type": "application/json"})
+    if API_KEY:
+        ses.headers.update({"X-API-Key": API_KEY})
     return ses
 
 
