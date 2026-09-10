@@ -10,8 +10,6 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     env:
-      # Empty when the secret is not configured — used to decide whether the
-      # live-integration test job can run at all (see the `if:` below).
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
     services:
@@ -31,12 +29,23 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: backend/requirements.txt
+      
+      - name: Free up disk space
+        run: |
+          sudo apt-get clean
+          sudo apt-get autoclean
+          sudo apt-get autoremove
+          docker system prune -af --volumes
+      
       - name: Install backend deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt
-          pip uninstall -y torch || true
+          # Install requirements but exclude torch
+          pip install -r backend/requirements.txt --no-deps || true
+          # Install only torch CPU version
           pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
+          # Install other dependencies
+          pip install -r backend/requirements.txt
 
       # Gates that need no secrets and must always pass.
       - name: Lint
@@ -55,9 +64,6 @@ jobs:
             exit 1
           fi
 
-      # The suite drives a live server over HTTP and calls Groq + Pinecone, so
-      # it can only run where those secrets exist. It is skipped (not silently
-      # passed) otherwise — the old `|| true` hid real failures.
       - name: Pytest
         if: env.GROQ_API_KEY != '' && env.PINECONE_API_KEY != ''
         env:
