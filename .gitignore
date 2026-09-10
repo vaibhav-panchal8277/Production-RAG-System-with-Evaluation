@@ -29,7 +29,7 @@ venv.bak/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
-
+venv/
 # Node / Frontend
 node_modules/
 build/
