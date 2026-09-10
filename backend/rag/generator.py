@@ -71,7 +71,7 @@ def generate_answer(query: str, contexts: list[dict]) -> tuple[str, str]:
     except (OpenAIError, RuntimeError, ConnectionError, ValueError, TimeoutError) as e:
         # Log the full error server-side (model name / auth issues show up here),
         # return a generic message to the caller.
-        logger.exception("LLM generation failed (model=%s): %s", LLM_MODEL, e)
+        logger.exception("LLM generation failed (model=%s)", LLM_MODEL)
         answer = "I encountered an error while generating the answer. Please try again."
 
     return answer, LLM_MODEL
