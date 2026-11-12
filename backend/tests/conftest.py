@@ -10,18 +10,26 @@ import requests
 # already set. Without this, a developer's real .env leaked into the "offline"
 # run: live Groq/Pinecone/Langfuse keys, and REACT_APP_BACKEND_URL, which
 # switched the integration suite on mid-run. Values exported in the shell (as CI
-# does for the integration run) still win, because setdefault keeps them.
+# does for the integration run) still win.
 for _name, _value in {
-    "GROQ_API_KEY": "test-dummy",
     "PINECONE_API_KEY": "",
     "LANGFUSE_PUBLIC_KEY": "",
     "LANGFUSE_SECRET_KEY": "",
     "RAG_API_KEY": "",
     "REACT_APP_BACKEND_URL": "",
+}.items():
+    os.environ.setdefault(_name, _value)
+
+# These must be non-empty for the modules to import at all. An exported but
+# EMPTY value counts as unset: GitHub Actions expands a missing repository
+# secret to "", which made the offline CI step fail at import of llm_client.
+for _name, _value in {
+    "GROQ_API_KEY": "test-dummy",
     "MONGO_URL": "mongodb://127.0.0.1:1",
     "DB_NAME": "rag_eval_test",
 }.items():
-    os.environ.setdefault(_name, _value)
+    if not os.environ.get(_name, "").strip():
+        os.environ[_name] = _value
 
 
 def backend_url() -> str | None:
