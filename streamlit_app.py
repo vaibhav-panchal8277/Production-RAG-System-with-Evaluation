@@ -7,6 +7,7 @@ documents, so interpolating it raw was a stored-XSS vector.
 """
 import html
 import os
+import time
 from urllib.parse import quote
 
 import pandas as pd
@@ -76,6 +77,11 @@ input, textarea { border-radius: 10px !important; }
 
 
 # ============ API HELPERS ============
+# What a backend call can raise: transport/HTTP errors (bad JSON included), a
+# missing key in a response, or a failed / timed-out background evaluation.
+API_ERRORS = (requests.RequestException, KeyError, ValueError, RuntimeError)
+
+
 def _headers() -> dict:
     return {"X-API-Key": API_KEY} if API_KEY else {}
 
@@ -98,6 +104,23 @@ def api_delete(path):
     r = requests.delete(f"{API}{path}", timeout=60, headers=_headers())
     r.raise_for_status()
     return r.json()
+
+
+def run_eval_in_background(scope: str, limit: int, timeout_s: int = 3600) -> dict:
+    """Start a background evaluation and poll until it finishes.
+
+    A full test-set run can outlast what proxies hold one request open for.
+    """
+    job = api_post("/evaluations/run", json={"scope": scope, "limit": limit, "background": True})
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        time.sleep(3)
+        status = api_get(f"/evaluations/jobs/{job['job_id']}")
+        if status["status"] == "done":
+            return status["result"]
+        if status["status"] == "failed":
+            raise RuntimeError(status.get("error") or "Evaluation failed")
+    raise RuntimeError("Evaluation is still running; check the history table later.")
 
 
 def err_text(e: Exception) -> str:
@@ -134,7 +157,7 @@ with st.sidebar:
         st.markdown(f"**Langfuse**: {lf}")
         if health.get("auth_required") and not API_KEY:
             st.warning("Backend requires an API key. Set RAG_API_KEY for this app.")
-    except Exception as e:
+    except API_ERRORS as e:
         st.error(f"Backend not reachable: {err_text(e)}")
 
     st.markdown("---")
@@ -144,7 +167,7 @@ with st.sidebar:
                 res = api_post("/documents/seed")
             st.success(f"Seeded {len(res['ingested'])} documents")
             st.rerun()
-        except Exception as e:
+        except API_ERRORS as e:
             st.error(f"Seed failed: {err_text(e)}")
 
     st.markdown("---")
@@ -200,7 +223,7 @@ with tab_chat:
                     "/query",
                     json={"query": query.strip(), "top_k": top_k, "mode": mode},
                 )
-        except Exception as e:
+        except API_ERRORS as e:
             st.error(err_text(e))
 
         if res:
@@ -269,7 +292,7 @@ with tab_docs:
                     if data.get("warning"):
                         st.warning(data["warning"])
                     st.rerun()
-                except Exception as e:
+                except API_ERRORS as e:
                     st.error(f"Failed: {err_text(e)}")
 
         st.markdown("#### Or use the sample corpus")
@@ -280,14 +303,14 @@ with tab_docs:
                     api_post("/documents/seed")
                 st.success("Done")
                 st.rerun()
-            except Exception as e:
+            except API_ERRORS as e:
                 st.error(f"Seed failed: {err_text(e)}")
 
     with list_col:
         st.markdown("#### Indexed documents")
         try:
             docs = api_get("/documents")["documents"]
-        except Exception as e:
+        except API_ERRORS as e:
             docs = []
             st.error(f"Could not load documents: {err_text(e)}")
         if not docs:
@@ -303,7 +326,7 @@ with tab_docs:
                     api_delete(f"/documents/{quote(del_source, safe='')}")
                     st.success("Deleted")
                     st.rerun()
-                except Exception as e:
+                except API_ERRORS as e:
                     st.error(f"Delete failed: {err_text(e)}")
 
 # ============ EVALUATION TAB ============
@@ -328,8 +351,8 @@ with tab_eval:
         res = None
         with st.spinner("Running Faithfulness · Answer Relevancy · Context Precision (this may take a while)…"):
             try:
-                res = api_post("/evaluations/run", json={"scope": scope, "limit": int(limit)})
-            except Exception as e:
+                res = run_eval_in_background(scope, int(limit))
+            except API_ERRORS as e:
                 st.error(f"Eval failed: {err_text(e)}")
         if res:
             agg = res.get("aggregate") or {}
@@ -349,6 +372,19 @@ with tab_eval:
                 f'<div class="metric-value">{agg.get("n_samples", 0)} · {agg.get("duration_s", 0)}s</div></div>',
                 unsafe_allow_html=True,
             )
+            # Golden-set metrics: only populated for test-set runs.
+            g1, g2, g3, g4 = st.columns(4)
+            for col, label, key in (
+                (g1, "Answer Correctness", "answer_correctness"),
+                (g2, "Context Recall", "context_recall"),
+                (g3, "Retrieval Hit Rate", "retrieval_hit_rate"),
+                (g4, "Refusal Accuracy", "refusal_accuracy"),
+            ):
+                col.markdown(
+                    f'<div class="metric-card"><div class="metric-label">{label}</div>'
+                    f'<div class="metric-value">{fmt_metric(agg.get(key))}</div></div>',
+                    unsafe_allow_html=True,
+                )
             st.markdown("### Per-question scores")
             st.dataframe(pd.DataFrame(res.get("per_row") or []), use_container_width=True, hide_index=True)
 
@@ -356,14 +392,16 @@ with tab_eval:
     st.markdown("#### Historical eval runs")
     try:
         runs = api_get("/evaluations")["runs"]
-    except Exception:
+    except API_ERRORS:
         runs = []
     if not runs:
         st.info("No evaluations yet. Run one above.")
     else:
         rdf = pd.DataFrame(runs)
         keep = [c for c in ["created_at", "scope", "n_samples", "faithfulness",
-                            "answer_relevancy", "context_precision", "duration_s"] if c in rdf.columns]
+                            "answer_relevancy", "context_precision", "answer_correctness",
+                            "context_recall", "retrieval_hit_rate", "retrieval_mrr",
+                            "refusal_accuracy", "duration_s"] if c in rdf.columns]
         st.dataframe(rdf[keep], use_container_width=True, hide_index=True)
 
         if {"faithfulness", "answer_relevancy", "context_precision"}.issubset(rdf.columns):
@@ -378,7 +416,7 @@ with tab_eval:
 with tab_history:
     try:
         convs = api_get("/conversations", limit=50)["conversations"]
-    except Exception as e:
+    except API_ERRORS as e:
         convs = []
         st.error(f"Could not load history: {err_text(e)}")
     if not convs:

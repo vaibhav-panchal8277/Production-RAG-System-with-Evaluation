@@ -34,14 +34,19 @@ def get_langfuse():
 
 
 def trace_rag(
-    query: str, contexts: list[dict], answer: str, model: str, latency_ms: int
+    query: str,
+    contexts: list[dict],
+    answer: str,
+    model: str,
+    latency_ms: int,
+    name: str = "rag-query",
 ) -> str | None:
     lf = get_langfuse()
     if not lf:
         return None
     try:
         trace = lf.trace(
-            name="rag-query",
+            name=name,
             input={"query": query},
             output={"answer": answer},
             metadata={"latency_ms": latency_ms, "n_contexts": len(contexts)},
@@ -81,6 +86,28 @@ def score_trace(trace_id: str, name: str, value: float, comment: str = ""):
         lf.score(trace_id=trace_id, name=name, value=float(value), comment=comment)
     except (RuntimeError, ConnectionError, ValueError, AttributeError) as e:
         logger.debug("Langfuse score failed for trace %s: %s", trace_id, e)
+
+
+def score_eval_rows(rows: list[dict], metrics: tuple[str, ...], run_id: str) -> int:
+    """Attach each row's eval metrics to its Langfuse trace; returns scores sent.
+
+    Rows without a trace (tracing off, or a trace that failed) and metrics that
+    don't apply to a row (None) are skipped.
+    """
+    if not get_langfuse():
+        return 0
+    sent = 0
+    for row in rows:
+        trace_id = row.get("trace_id")
+        if not trace_id:
+            continue
+        for metric in metrics:
+            value = row.get(metric)
+            if value is None:
+                continue
+            score_trace(trace_id, metric, value, comment=f"eval run {run_id}")
+            sent += 1
+    return sent
 
 
 def shutdown_tracing():

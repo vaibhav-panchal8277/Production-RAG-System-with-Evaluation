@@ -1,4 +1,4 @@
-.PHONY: help install install-backend install-frontend dev dev-backend dev-frontend docker-up docker-down docker-logs seed test clean
+.PHONY: help install install-backend install-frontend install-streamlit dev dev-backend dev-frontend docker-up docker-down docker-logs seed test clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -9,12 +9,14 @@ help: ## Show this help
 
 install: install-backend install-frontend ## Install backend + frontend deps
 
-install-backend: ## Create .venv and install backend deps (CPU-only torch)
+install-backend: ## Create .venv and install backend + dev deps (CPU-only torch)
 	python3.11 -m venv .venv
 	./.venv/bin/pip install --upgrade pip
-	./.venv/bin/pip install -r backend/requirements.txt
-	./.venv/bin/pip uninstall -y torch || true
 	./.venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
+	./.venv/bin/pip install -r backend/requirements-dev.txt
+
+install-streamlit: ## Install the Streamlit UI deps into .venv
+	./.venv/bin/pip install -r requirements-streamlit.txt
 
 install-frontend: ## Install frontend deps with Yarn
 	cd frontend && yarn install
@@ -47,8 +49,13 @@ docker-logs: ## Tail Docker logs
 # Utilities
 # -----------------------------
 
+BACKEND_URL ?= http://localhost:8001
+
+# Sends X-API-Key when RAG_API_KEY is set in the shell or in backend/.env
+# (seeding is an authenticated route once a key is configured).
 seed: ## Seed the sample corpus via the running backend
-	curl -sS -X POST http://localhost:8001/api/documents/seed | python3 -m json.tool
+	@KEY="$${RAG_API_KEY:-$$(sed -n 's/^RAG_API_KEY=//p' backend/.env 2>/dev/null)}"; \
+	curl -sS -X POST $${KEY:+-H "X-API-Key: $$KEY"} $(BACKEND_URL)/api/documents/seed | python3 -m json.tool
 
 test: ## Run backend pytest suite
 	cd backend && ../.venv/bin/pytest -q

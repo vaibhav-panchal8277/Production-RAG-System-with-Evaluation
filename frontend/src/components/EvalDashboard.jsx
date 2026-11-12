@@ -25,6 +25,10 @@ const METRIC_COLORS = {
   faithfulness: "#22c55e",
   answer_relevancy: "#eab308",
   context_precision: "#3b82f6",
+  answer_correctness: "#a855f7",
+  context_recall: "#06b6d4",
+  retrieval_hit_rate: "#f97316",
+  refusal_accuracy: "#ec4899",
 };
 
 const scoreColor = (v) => {
@@ -45,14 +49,16 @@ export default function EvalDashboard() {
   const runs = useQuery({ queryKey: ["evals"], queryFn: () => api.listEvals(30) });
 
   const runEval = useMutation({
-    mutationFn: () => api.runEval({ scope, limit: parseInt(limit, 10) }),
+    mutationFn: () => api.runEvalInBackground({ scope, limit: parseInt(limit, 10) }),
     onSuccess: (r) => {
       setLatest(r);
       toast.success(`Eval complete · ${r?.aggregate?.n_samples ?? 0} samples`);
       qc.invalidateQueries({ queryKey: ["evals"] });
     },
-    onError: (e) =>
-      toast.error(e?.response?.data?.detail || e.message || "Eval failed"),
+    onError: (e) => {
+      toast.error(e?.response?.data?.detail || e.message || "Eval failed");
+      qc.invalidateQueries({ queryKey: ["evals"] });
+    },
   });
 
   // The run endpoint nests metrics under `aggregate`; historical runs from
@@ -80,9 +86,10 @@ export default function EvalDashboard() {
           The number you can point to.
         </h1>
         <div className="text-sm text-neutral-400 mt-3 max-w-2xl">
-          RAGAS Faithfulness · Answer Relevancy · Context Precision, computed on the golden
-          test-set or your recent queries. Every metric is pushed as a Langfuse score,
-          traceable per-query.
+          RAGAS Faithfulness · Answer Relevancy · Context Precision on the golden test-set or
+          your recent queries, plus answer correctness, context recall, retrieval hit rate and
+          refusal accuracy against the golden answers. With Langfuse configured, every metric
+          is attached as a score to the trace of the query it graded.
         </div>
       </div>
 
@@ -158,6 +165,42 @@ export default function EvalDashboard() {
           testId="metric-context-precision"
           hint="was the retrieved context actually relevant"
           color={METRIC_COLORS.context_precision}
+        />
+      </div>
+
+      {/* Golden-set metrics — scored only on test-set runs (— otherwise) */}
+      <div className="grid grid-cols-4 border-b border-white/10">
+        <MetricCard
+          label="Answer Correctness"
+          value={agg?.answer_correctness}
+          testId="metric-answer-correctness"
+          hint="agreement with the golden reference answer"
+          color={METRIC_COLORS.answer_correctness}
+        />
+        <MetricCard
+          label="Context Recall"
+          value={agg?.context_recall}
+          testId="metric-context-recall"
+          hint="reference facts covered by retrieved context"
+          color={METRIC_COLORS.context_recall}
+          bordered
+        />
+        <MetricCard
+          label="Retrieval Hit Rate"
+          value={agg?.retrieval_hit_rate}
+          testId="metric-retrieval-hit-rate"
+          hint={`expected document in top-k · MRR ${
+            agg?.retrieval_mrr == null ? "—" : agg.retrieval_mrr.toFixed(2)
+          }`}
+          color={METRIC_COLORS.retrieval_hit_rate}
+        />
+        <MetricCard
+          label="Refusal Accuracy"
+          value={agg?.refusal_accuracy}
+          testId="metric-refusal-accuracy"
+          hint="out-of-scope questions correctly refused"
+          color={METRIC_COLORS.refusal_accuracy}
+          bordered
         />
       </div>
 

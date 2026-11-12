@@ -31,7 +31,8 @@ export default function DocumentsPanel() {
       qc.invalidateQueries({ queryKey: ["documents"] });
       qc.invalidateQueries({ queryKey: ["health"] });
     },
-    onError: (e) => toast.error(e.message),
+    // 503 = vector store unreachable; nothing was deleted, safe to retry.
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message),
   });
 
   const handleUpload = async (file) => {

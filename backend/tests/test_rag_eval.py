@@ -16,7 +16,11 @@ import time
 import pytest
 import requests
 
+if not os.environ.get("REACT_APP_BACKEND_URL"):
+    pytest.skip("integration suite: REACT_APP_BACKEND_URL not set", allow_module_level=True)
+
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
+pytestmark = pytest.mark.usefixtures("seeded_corpus")
 
 # Mutating routes require X-API-Key only when the server has RAG_API_KEY set.
 # Sending it unconditionally keeps the suite green in both configurations.
@@ -38,7 +42,8 @@ class TestHealth:
         r = s.get(f"{BASE_URL}/api/health", timeout=30)
         assert r.status_code == 200
         d = r.json()
-        assert d.get("langfuse_configured") is True
+        # Langfuse is optional (CI runs without it); only the shape is checked.
+        assert isinstance(d.get("langfuse_configured"), bool)
         assert "pinecone" in d
         assert isinstance(d["pinecone"].get("total_vectors"), int)
         assert d["pinecone"]["dimension"] == 384
@@ -184,6 +189,20 @@ class TestEvaluation:
             v = agg.get(k)
             assert v is None or (isinstance(v, (int, float)) and 0.0 <= v <= 1.0), \
                 f"{k}={v}"
+        # Golden-set metrics are present on test-set runs (value may be null).
+        for k in (
+            "answer_correctness",
+            "context_recall",
+            "retrieval_hit_rate",
+            "retrieval_mrr",
+            "refusal_accuracy",
+        ):
+            assert k in agg, f"missing aggregate {k}"
+            v = agg[k]
+            assert v is None or (isinstance(v, (int, float)) and 0.0 <= v <= 1.0), f"{k}={v}"
+        # The first 3 test-set items are in-scope questions, so retrieval is scored.
+        assert agg["retrieval_hit_rate"] is not None
+        assert agg["refusal_accuracy"] is None
         assert isinstance(d.get("per_row"), list) and len(d["per_row"]) == agg["n_samples"]
         # at least one metric must be numeric across the run
         numeric_any = any(

@@ -1,61 +1,59 @@
-# Python
+# Patterns for build/packaging folders are anchored with a leading "/" so they
+# only match at the repo root. The unanchored Python-template "lib/" used to
+# match frontend/src/lib/, so new files there were silently never committed.
+
+# ---------------- Secrets (never commit) ----------------
+# Real env files. The committed templates are named env.example.txt, which
+# none of these match.
+.env
+.env.*
+*.env
+credentials.json
+.credentials
+*.pem
+*.key
+
+# ---------------- Python ----------------
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+.eggs/
+/build/
+/dist/
+/lib/
+/lib64/
+/wheels/
+# Virtual environments
 .venv/
-env/
-ENV/
-env.bak/
-venv.bak/
+venv/
+/env/
+# Tool caches and coverage
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
-venv/
-# Node / Frontend
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# ---------------- Node / frontend ----------------
+# (frontend/.gitignore also covers its own node_modules and build output)
 node_modules/
-build/
-.DS_Store
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# Backend local env
-backend/.env
-frontend/.env
+# ---------------- Test & eval output ----------------
+test_reports/
+junit*.xml
 
-# IDEs
+# ---------------- Editors, OS, local tooling ----------------
 .vscode/
 .idea/
 *.swp
 *.swo
-.env.*
-*.env
-credentials.json
-*.pem
-*.key
-.credentials
+.DS_Store
+.claude/settings.local.json

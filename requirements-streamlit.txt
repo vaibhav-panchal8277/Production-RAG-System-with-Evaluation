@@ -1,0 +1,5 @@
+# Streamlit UI (streamlit_app.py). It only talks to the backend over HTTP, so it
+# needs none of the backend's dependencies.
+streamlit==1.41.1
+requests>=2.31.0
+pandas>=2.2.0

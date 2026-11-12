@@ -1,0 +1,5 @@
+# Optional: NeMo Guardrails semantic input layer (ENABLE_NEMO_RAILS=true).
+# Kept out of the default install because it is large and off by default.
+-r requirements.txt
+
+nemoguardrails>=0.23.0

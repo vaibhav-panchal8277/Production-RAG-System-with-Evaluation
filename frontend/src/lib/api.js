@@ -41,6 +41,22 @@ export const api = {
   getConversation: (id) => http.get(`/conversations/${id}`).then((r) => r.data),
   testset: () => http.get("/testset").then((r) => r.data),
   runEval: (body) => http.post("/evaluations/run", body).then((r) => r.data),
+  evalJob: (id) => http.get(`/evaluations/jobs/${id}`).then((r) => r.data),
+  // Start a background evaluation and poll until it finishes. A full test-set
+  // run can outlast what proxies/browsers will hold a single request open for.
+  runEvalInBackground: async (body, { intervalMs = 3000, timeoutMs = 60 * 60 * 1000 } = {}) => {
+    const { job_id: jobId } = await http
+      .post("/evaluations/run", { ...body, background: true })
+      .then((r) => r.data);
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      const job = await http.get(`/evaluations/jobs/${jobId}`).then((r) => r.data);
+      if (job.status === "done") return job.result;
+      if (job.status === "failed") throw new Error(job.error || "Evaluation failed");
+    }
+    throw new Error("Evaluation is still running; check the history table later.");
+  },
   listEvals: (limit = 30) =>
     http.get("/evaluations", { params: { limit } }).then((r) => r.data),
 };
