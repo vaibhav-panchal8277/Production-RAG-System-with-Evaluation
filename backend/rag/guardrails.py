@@ -73,7 +73,9 @@ _INJECTION_PATTERNS = [
     r"\bdeveloper\s+mode\b",
     r"\bjailbreak\b",
     r"pretend\s+(?:that\s+)?you\s+(?:are|have)\s+no\s+(?:rules|restrictions|guidelines)",
-    r"(?:bypass|override|ignore)\s+(?:your\s+)?(?:safety|guardrails?|restrictions?|filters?)",
+    # "ignore" only with "your": "ignore safety warnings" is an ordinary question.
+    r"(?:bypass|override)\s+(?:your\s+|the\s+)?(?:safety|guardrails?|restrictions?|filters?)",
+    r"ignore\s+your\s+(?:safety|guardrails?|restrictions?|filters?|rules?)",
 ]
 _INJECTION_RE = [re.compile(p, re.IGNORECASE) for p in _INJECTION_PATTERNS]
 
@@ -183,6 +185,17 @@ def check_input(query: str) -> GuardrailDecision:
         return GuardrailDecision.block(OFF_TOPIC_MESSAGE, "off_topic")
 
     return GuardrailDecision.allow()
+
+
+def looks_like_injection(text: str) -> bool:
+    """True if `text` contains instruction-override phrasing.
+
+    Used on document chunks at ingest time: retrieved text is spliced into the
+    prompt, so a planted "ignore previous instructions" is indirect prompt
+    injection. Such chunks are flagged (not dropped — a security policy may
+    legitimately quote these phrases) and marked in the prompt.
+    """
+    return any(rx.search(text) for rx in _INJECTION_RE)
 
 
 def guardrails_status() -> dict:

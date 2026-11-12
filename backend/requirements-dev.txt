@@ -1,0 +1,7 @@
+# Development and test tools, on top of the runtime dependencies.
+-r requirements.txt
+
+pytest>=8.0.0
+httpx>=0.27,<0.29          # FastAPI TestClient (offline API tests)
+requests>=2.31.0           # integration tests drive a running backend over HTTP
+ruff==0.17.4               # pinned: newer releases change the default rule set

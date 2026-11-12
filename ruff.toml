@@ -1,0 +1,7 @@
+# Lint config for `ruff check backend streamlit_app.py` (ruff is pinned in
+# backend/requirements-dev.txt, so the default rule set is stable).
+target-version = "py311"
+
+# backend/ is the import root (`from rag ...`, `import server`), so imports
+# from it sort as first-party.
+src = ["backend", "."]

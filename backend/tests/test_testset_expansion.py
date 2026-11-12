@@ -10,34 +10,19 @@ Verifies:
      within ~4 minutes and persists to /api/evaluations history.
 """
 import os
-import re
 import time
 from collections import Counter
 
 import pytest
 import requests
 
+from rag.eval_metrics import is_refusal
+
+if not os.environ.get("REACT_APP_BACKEND_URL"):
+    pytest.skip("integration suite: REACT_APP_BACKEND_URL not set", allow_module_level=True)
+
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
-
-REFUSAL_PATTERNS = [
-    r"don'?t have enough",
-    r"do not have enough",
-    r"not (?:enough |contain|mentioned|specified|available|described|include)",
-    r"no information",
-    r"cannot (?:answer|find|determine|provide)",
-    r"can'?t (?:answer|find|determine|provide)",
-    r"not (?:in|found in|present in) the (?:provided )?documents?",
-    r"documents? (?:do not|don'?t) (?:contain|mention|include)",
-    r"insufficient (?:information|context)",
-    r"unable to (?:answer|find|determine)",
-]
-
-
-def is_refusal(text: str) -> bool:
-    if not text:
-        return False
-    t = text.lower()
-    return any(re.search(p, t) for p in REFUSAL_PATTERNS)
+pytestmark = pytest.mark.usefixtures("seeded_corpus")
 
 
 @pytest.fixture(scope="module")
@@ -153,6 +138,15 @@ class TestFullEvalRun:
             if row.get(m) is not None
         )
         assert numeric_ct > 0, "no numeric RAGAS scores at all"
+
+        # Out-of-scope rows skip RAGAS and are scored on refusal instead.
+        oos = [row for row in per_row if row.get("expected_source") == "OUT_OF_SCOPE"]
+        assert len(oos) == 5
+        for row in oos:
+            assert row["refusal_correct"] in (0.0, 1.0)
+            assert row["faithfulness"] is None and row["answer_correctness"] is None
+        assert agg["refusal_accuracy"] is not None
+        assert agg["retrieval_hit_rate"] is not None
         print(f"total numeric metric values across rows: {numeric_ct}/{45*3}")
 
     def test_eval_persisted_to_history(self, s):

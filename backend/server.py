@@ -1,12 +1,14 @@
 """FastAPI backend for RAG Evaluation System."""
+import asyncio
 import logging
 import os
 import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import NamedTuple
 
 from dotenv import load_dotenv
 from fastapi import (
@@ -17,6 +19,7 @@ from fastapi import (
     Header,
     HTTPException,
     Query,
+    Response,
     UploadFile,
 )
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -28,13 +31,15 @@ from starlette.middleware.cors import CORSMiddleware
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
-from rag.evaluator import evaluate_conversations
-from rag.generator import generate_answer
-from rag.guardrails import guardrails_status
+from rag.evaluator import ALL_METRICS, evaluate_conversations
+from rag.generator import NO_CONTEXT_ANSWER, generate_answer
+from rag.guardrails import check_input, guardrails_status
+from rag.ingest import delete_document as remove_document
 from rag.ingest import ingest_document, rebuild_bm25_from_db
-from rag.llm_client import provider_info
-from rag.observability import shutdown_tracing, trace_rag
+from rag.llm_client import LLM_MODEL, provider_info
+from rag.observability import score_eval_rows, shutdown_tracing, trace_rag
 from rag.vector_store import (
+    VectorStoreError,
     bm25_search,
     bm25_size,
     dense_search,
@@ -59,6 +64,8 @@ API_KEY = (os.environ.get("RAG_API_KEY") or "").strip()
 MAX_UPLOAD_BYTES = int(float(os.environ.get("MAX_UPLOAD_MB", "20")) * 1024 * 1024)
 MAX_PAGE_LIMIT = int(os.environ.get("MAX_PAGE_LIMIT", "200"))
 MAX_EVAL_SAMPLES = int(os.environ.get("MAX_EVAL_SAMPLES", "100"))
+# Test-set questions answered concurrently during an evaluation run.
+EVAL_CONCURRENCY = max(1, int(os.environ.get("EVAL_CONCURRENCY", "4")))
 UPLOAD_CHUNK = 1024 * 1024
 
 _RAW_ORIGINS = os.environ.get("CORS_ORIGINS", "http://localhost:3000").strip()
@@ -70,7 +77,10 @@ ALLOW_CREDENTIALS = not ALLOW_WILDCARD
 
 
 async def require_api_key(x_api_key: str | None = Header(default=None)):
-    """Guard mutating / expensive endpoints.
+    """Guard mutating, expensive or private endpoints.
+
+    That is: upload/seed/delete, evaluations, /query (spends LLM quota) and
+    /conversations (holds every user's questions and answers).
 
     When RAG_API_KEY is unset the dependency is a no-op so local development and
     the existing test suite keep working; startup logs a prominent warning in
@@ -87,8 +97,8 @@ async def require_api_key(x_api_key: str | None = Header(default=None)):
 async def lifespan(_app: FastAPI):
     if not API_KEY:
         logger.warning(
-            "RAG_API_KEY is not set — mutating endpoints (upload/seed/delete/"
-            "evaluations) are UNAUTHENTICATED. Set RAG_API_KEY before exposing "
+            "RAG_API_KEY is not set — upload/seed/delete, evaluations, query and "
+            "conversation history are UNAUTHENTICATED. Set RAG_API_KEY before exposing "
             "this service beyond localhost."
         )
     if ALLOW_WILDCARD:
@@ -109,6 +119,16 @@ async def lifespan(_app: FastAPI):
     except PyMongoError as e:
         logger.warning("Mongo index creation skipped: %s", e)
 
+    try:
+        # Background eval jobs live in this process; any still open from a
+        # previous run will never finish.
+        await db.eval_jobs.update_many(
+            {"status": {"$in": ["queued", "running"]}},
+            {"$set": {"status": "failed", "error": "Interrupted by a server restart"}},
+        )
+    except PyMongoError as e:
+        logger.warning("Could not close out stale eval jobs: %s", e)
+
     yield
 
     await run_in_threadpool(shutdown_tracing)
@@ -122,6 +142,8 @@ async def _ensure_mongo_indexes():
     await db.conversations.create_index("id", unique=True)
     await db.conversations.create_index([("created_at", -1)])
     await db.eval_runs.create_index([("created_at", -1)])
+    await db.eval_runs.create_index("id")
+    await db.eval_jobs.create_index("id", unique=True)
 
 
 app = FastAPI(title="RAG Evaluation System", lifespan=lifespan)
@@ -150,6 +172,20 @@ class SeedOut(BaseModel):
 class EvalRunIn(BaseModel):
     scope: str = Field(default="recent", pattern="^(recent|testset)$")
     limit: int = Field(default=20, ge=1, le=1000)
+    background: bool = False
+
+
+# Aggregate name -> per-row metric key it averages.
+_AGGREGATES = {
+    "faithfulness": "faithfulness",
+    "answer_relevancy": "answer_relevancy",
+    "context_precision": "context_precision",
+    "answer_correctness": "answer_correctness",
+    "context_recall": "context_recall",
+    "retrieval_hit_rate": "retrieval_hit",
+    "retrieval_mrr": "reciprocal_rank",
+    "refusal_accuracy": "refusal_correct",
+}
 
 
 # ---------- helpers ----------
@@ -161,15 +197,29 @@ def _retrieve(query: str, mode: str, top_k: int) -> list[dict]:
     return hybrid_search(query, top_k=top_k)
 
 
-async def _retrieve_and_generate(query: str, mode: str, top_k: int) -> tuple[list[dict], str, str]:
-    """Retrieve once, then generate from exactly those contexts.
+class RagResult(NamedTuple):
+    contexts: list[dict]
+    answer: str
+    model: str
+    guardrail: str  # "allowed", or the reason the input rails blocked it
 
-    Both calls are synchronous and network-bound, so they run in a worker thread
-    to avoid blocking the event loop (which would serialise all requests).
+
+async def _retrieve_and_generate(query: str, mode: str, top_k: int) -> RagResult:
+    """Check the input rails, retrieve once, then generate from those contexts.
+
+    Rails run first so a blocked query (greeting, injection attempt, oversized
+    input) costs no embedding, Pinecone or BM25 work and returns no retrieved
+    chunks. All steps are synchronous (NeMo, when enabled, is network-bound), so
+    they run in worker threads to avoid blocking the event loop.
     """
+    decision = await run_in_threadpool(check_input, query)
+    if decision.blocked:
+        logger.info("Guardrail blocked query (%s)", decision.reason)
+        return RagResult([], decision.message or NO_CONTEXT_ANSWER, LLM_MODEL, decision.reason)
+
     contexts = await run_in_threadpool(_retrieve, query, mode, top_k)
     answer, model = await run_in_threadpool(generate_answer, query, contexts)
-    return contexts, answer, model
+    return RagResult(contexts, answer, model, decision.reason)
 
 
 # ---------- routes ----------
@@ -204,6 +254,8 @@ async def list_documents():
 
 @api.post("/documents/upload", dependencies=[Depends(require_api_key)])
 async def upload_document(file: UploadFile = File(...)):  # noqa: B008
+    if not file.filename:
+        raise HTTPException(400, "Uploaded file has no filename")
     # Stream the upload so an oversized file can't exhaust memory.
     chunks: list[bytes] = []
     total = 0
@@ -263,23 +315,21 @@ async def seed_documents():
 
 @api.delete("/documents/{source}", dependencies=[Depends(require_api_key)])
 async def delete_document(source: str):
-    from rag.vector_store import delete_by_source
-
-    vectors_deleted = await run_in_threadpool(delete_by_source, source)
-    await db.chunks.delete_many({"source": source})
-    r = await db.documents.delete_one({"source": source})
-    await rebuild_bm25_from_db(db)
-    out = {"deleted": r.deleted_count, "source": source}
-    if not vectors_deleted:
-        out["warning"] = "Vector store delete failed; stale vectors may remain."
-    return out
+    try:
+        return await remove_document(db, source)
+    except VectorStoreError as e:
+        # Nothing was removed, so the caller can simply retry.
+        logger.warning("Delete of %s aborted: %s", source, e)
+        raise HTTPException(
+            503, "Vector store unavailable; nothing was deleted. Please retry."
+        ) from e
 
 
 # ----- query / RAG -----
-@api.post("/query")
+@api.post("/query", dependencies=[Depends(require_api_key)])
 async def query(body: QueryIn):
     t0 = time.time()
-    contexts, answer, model = await _retrieve_and_generate(
+    contexts, answer, model, guardrail = await _retrieve_and_generate(
         body.query, body.mode, body.top_k
     )
     latency_ms = int((time.time() - t0) * 1000)
@@ -303,7 +353,8 @@ async def query(body: QueryIn):
         "latency_ms": max(latency_ms, 1),
         "trace_id": trace_id,
         "model": model,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "guardrail": guardrail,
+        "created_at": datetime.now(UTC).isoformat(),
     }
     await db.conversations.insert_one(doc)
 
@@ -315,10 +366,11 @@ async def query(body: QueryIn):
         "latency_ms": max(latency_ms, 1),
         "trace_id": trace_id,
         "model": model,
+        "guardrail": guardrail,
     }
 
 
-@api.get("/conversations")
+@api.get("/conversations", dependencies=[Depends(require_api_key)])
 async def list_conversations(
     limit: int = Query(default=50, ge=1, le=MAX_PAGE_LIMIT),
 ):
@@ -330,7 +382,7 @@ async def list_conversations(
     return {"conversations": convs}
 
 
-@api.get("/conversations/{conv_id}")
+@api.get("/conversations/{conv_id}", dependencies=[Depends(require_api_key)])
 async def get_conversation(conv_id: str):
     conv = await db.conversations.find_one({"id": conv_id}, {"_id": 0})
     if not conv:
@@ -344,77 +396,182 @@ async def get_testset():
     return {"testset": TEST_SET}
 
 
-@api.post("/evaluations/run", dependencies=[Depends(require_api_key)])
-async def run_evaluation(body: EvalRunIn):
-    t0 = time.time()
-    n = min(body.limit, MAX_EVAL_SAMPLES)
-
-    if body.scope == "testset":
-        rows = []
-        for item in TEST_SET[:n]:
-            # Retrieve ONCE and reuse for both generation and scoring, so the
-            # contexts RAGAS grades are exactly those the answer came from.
-            contexts, answer, _ = await _retrieve_and_generate(
-                item["question"], "hybrid", 5
-            )
-            rows.append(
-                {"query": item["question"], "answer": answer, "contexts": contexts}
-            )
-    else:
-        recent = (
-            await db.conversations.find({}, {"_id": 0})
-            .sort("created_at", -1)
-            .to_list(n)
+async def _testset_row(item: dict, limiter: asyncio.Semaphore) -> dict:
+    """Answer one golden question exactly as a live query would be answered."""
+    async with limiter:
+        t0 = time.time()
+        # Retrieve ONCE and reuse for both generation and scoring, so the
+        # contexts RAGAS grades are exactly those the answer came from.
+        contexts, answer, model, _ = await _retrieve_and_generate(
+            item["question"], "hybrid", 5
         )
-        if not recent:
-            raise HTTPException(400, "No recent conversations found to evaluate")
-        rows = [
-            {
-                "query": c["query"],
-                "answer": c["answer"],
-                "contexts": c.get("contexts", []),
-            }
-            for c in recent
-        ]
+        # Traced like a live query so eval scores can be attached to it.
+        trace_id = await run_in_threadpool(
+            trace_rag,
+            item["question"],
+            contexts,
+            answer,
+            model,
+            int((time.time() - t0) * 1000),
+            "rag-eval-testset",
+        )
+    return {
+        "query": item["question"],
+        "answer": answer,
+        "contexts": contexts,
+        "trace_id": trace_id,
+        # Golden labels: enable reference-based RAGAS metrics, retrieval
+        # hit-rate/MRR and refusal scoring.
+        "reference": item["reference"],
+        "expected_source": item["expected_source"],
+    }
 
-    per_row = await evaluate_conversations(rows)
+
+async def _recent_rows(n: int) -> list[dict]:
+    # Guardrail-blocked queries got a canned reply, not a RAG answer, so
+    # scoring them would only measure the canned text. (None also matches
+    # conversations stored before the field existed.)
+    recent = (
+        await db.conversations.find({"guardrail": {"$in": ["allowed", None]}}, {"_id": 0})
+        .sort("created_at", -1)
+        .to_list(n)
+    )
+    if not recent:
+        raise HTTPException(400, "No recent conversations found to evaluate")
+    return [
+        {
+            "query": c["query"],
+            "answer": c["answer"],
+            "contexts": c.get("contexts", []),
+            "trace_id": c.get("trace_id"),
+        }
+        for c in recent
+    ]
+
+
+async def _execute_eval(scope: str, limit: int) -> dict:
+    """Build rows, score them, persist the run; returns the API response shape."""
+    t0 = time.time()
+    n = min(limit, MAX_EVAL_SAMPLES)
+
+    if scope == "testset":
+        # Bounded fan-out: sequential generation made a 45-question run take
+        # many minutes; unbounded would trip provider rate limits.
+        limiter = asyncio.Semaphore(EVAL_CONCURRENCY)
+        rows = await asyncio.gather(*(_testset_row(item, limiter) for item in TEST_SET[:n]))
+    else:
+        rows = await _recent_rows(n)
+
+    per_row = await evaluate_conversations(list(rows))
 
     def _mean(key: str):
         vals = [r[key] for r in per_row if r.get(key) is not None]
         return round(sum(vals) / len(vals), 4) if vals else None
 
-    duration = int(time.time() - t0)
     run_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
+    # Means skip None, so each aggregate covers only the rows it applies to
+    # (e.g. refusal_accuracy is over out-of-scope questions only).
     aggregate = {
-        "scope": body.scope,
+        "scope": scope,
         "n_samples": len(per_row),
-        "faithfulness": _mean("faithfulness"),
-        "answer_relevancy": _mean("answer_relevancy"),
-        "context_precision": _mean("context_precision"),
-        "duration_s": duration,
+        **{name: _mean(key) for name, key in _AGGREGATES.items()},
+        "duration_s": int(time.time() - t0),
     }
 
     # Stored flat so /api/evaluations can project summary columns cheaply.
-    eval_doc = {
-        "id": run_id,
-        "created_at": now,
-        **aggregate,
-        "per_row": per_row,
-    }
-    await db.eval_runs.insert_one(eval_doc)
+    await db.eval_runs.insert_one(
+        {"id": run_id, "created_at": now, **aggregate, "per_row": per_row}
+    )
+    await run_in_threadpool(score_eval_rows, per_row, ALL_METRICS, run_id)
 
-    # Responded nested under "aggregate" — the shape both UIs and the test suite
-    # expect. (Previously the API returned these flat while every consumer read
-    # res["aggregate"], so the dashboard never showed the run it just executed.)
+    # Metrics are nested under "aggregate" — the shape both UIs and the tests read.
     return {
         "id": run_id,
         "created_at": now,
-        "scope": body.scope,
+        "scope": scope,
         "aggregate": aggregate,
         "per_row": per_row,
     }
+
+
+# One evaluation at a time: a full run makes hundreds of judge calls, and two
+# in parallel mostly just trip the provider's rate limits.
+_eval_slot = asyncio.Semaphore(1)
+# Strong references so running job tasks aren't garbage-collected mid-flight.
+_eval_tasks: set[asyncio.Task] = set()
+
+
+async def _run_eval_job(job_id: str, scope: str, limit: int) -> None:
+    def _now():
+        return datetime.now(UTC).isoformat()
+
+    async with _eval_slot:
+        await db.eval_jobs.update_one(
+            {"id": job_id}, {"$set": {"status": "running", "started_at": _now()}}
+        )
+        try:
+            result = await _execute_eval(scope, limit)
+        except HTTPException as e:
+            update = {"status": "failed", "error": str(e.detail)}
+        except Exception:
+            logger.exception("Evaluation job %s failed", job_id)
+            update = {"status": "failed", "error": "Evaluation failed due to a server error"}
+        else:
+            update = {"status": "done", "run_id": result["id"]}
+        await db.eval_jobs.update_one({"id": job_id}, {"$set": {**update, "finished_at": _now()}})
+
+
+@api.post("/evaluations/run", dependencies=[Depends(require_api_key)])
+async def run_evaluation(body: EvalRunIn, response: Response):
+    """Run an evaluation.
+
+    By default the request blocks until the run finishes. With
+    `background: true` it returns 202 and a job id at once; poll
+    `GET /evaluations/jobs/{job_id}` — a full test-set run can take longer than
+    proxies and browsers will hold a request open.
+    """
+    if not body.background:
+        async with _eval_slot:
+            return await _execute_eval(body.scope, body.limit)
+
+    job_id = str(uuid.uuid4())
+    await db.eval_jobs.insert_one(
+        {
+            "id": job_id,
+            "status": "queued",
+            "scope": body.scope,
+            "limit": body.limit,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    task = asyncio.create_task(_run_eval_job(job_id, body.scope, body.limit))
+    _eval_tasks.add(task)
+    task.add_done_callback(_eval_tasks.discard)
+    response.status_code = 202
+    return {"job_id": job_id, "status": "queued"}
+
+
+@api.get("/evaluations/jobs/{job_id}", dependencies=[Depends(require_api_key)])
+async def get_eval_job(job_id: str):
+    """Job status; once done, `result` has the same shape as a blocking run."""
+    job = await db.eval_jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Evaluation job not found")
+    if job["status"] == "done":
+        run = await db.eval_runs.find_one({"id": job["run_id"]}, {"_id": 0})
+        if run:
+            per_row = run.pop("per_row", [])
+            run_id, created_at = run.pop("id"), run.pop("created_at")
+            job["result"] = {
+                "id": run_id,
+                "created_at": created_at,
+                "scope": run.get("scope"),
+                "aggregate": run,
+                "per_row": per_row,
+            }
+    return job
 
 
 @api.get("/evaluations")
