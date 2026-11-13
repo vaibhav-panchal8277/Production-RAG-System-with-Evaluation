@@ -9,9 +9,10 @@ help: ## Show this help
 
 install: install-backend install-frontend ## Install backend + frontend deps
 
-install-backend: ## Create .venv and install backend + dev deps
+install-backend: ## Create .venv and install backend + dev deps (CPU-only torch)
 	python3.11 -m venv .venv
 	./.venv/bin/pip install --upgrade pip
+	./.venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
 	./.venv/bin/pip install -r backend/requirements-dev.txt
 
 install-streamlit: ## Install the Streamlit UI deps into .venv

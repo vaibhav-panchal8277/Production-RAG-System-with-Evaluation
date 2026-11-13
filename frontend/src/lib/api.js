@@ -9,7 +9,6 @@ export const API = `${BACKEND_URL}/api`;
 // to anyone who loads the page — this is a deployment convenience for a trusted
 // network, not a substitute for real per-user auth.
 const API_KEY = process.env.REACT_APP_RAG_API_KEY || "";
-export const HAS_API_KEY = Boolean(API_KEY);
 
 const http = axios.create({
   baseURL: API,

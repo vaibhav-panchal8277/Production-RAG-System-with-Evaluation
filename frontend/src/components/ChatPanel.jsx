@@ -1,7 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { useAccess } from "@/lib/access";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import CitedText from "@/components/CitedText";
@@ -12,7 +11,6 @@ export default function ChatPanel({ controls }) {
   const [result, setResult] = useState(null);
   const [activeChunk, setActiveChunk] = useState(null);
   const qc = useQueryClient();
-  const { isAdmin, canQuery, rateLimit } = useAccess();
 
   const runQuery = useMutation({
     mutationFn: (q) =>
@@ -24,8 +22,7 @@ export default function ChatPanel({ controls }) {
     },
     onError: (e) => {
       const msg = e?.response?.data?.detail || e.message || "Query failed";
-      const retry = e?.response?.status === 429 && e.response.headers?.["retry-after"];
-      toast.error(retry ? `${msg} (retry in ${retry}s)` : msg);
+      toast.error(msg);
     },
   });
 
@@ -40,7 +37,7 @@ export default function ChatPanel({ controls }) {
   );
 
   const submit = () => {
-    if (!query.trim() || !canQuery) return;
+    if (!query.trim()) return;
     runQuery.mutate(query.trim());
   };
 
@@ -89,17 +86,12 @@ export default function ChatPanel({ controls }) {
             <Button
               data-testid="ask-button"
               onClick={submit}
-              disabled={runQuery.isPending || !query.trim() || !canQuery}
+              disabled={runQuery.isPending || !query.trim()}
               className="rounded-none bg-white text-black hover:bg-neutral-200 font-mono text-xs uppercase tracking-[0.18em] px-6 h-10"
             >
-              {!canQuery ? "Admin key required" : runQuery.isPending ? "Thinking…" : "Ask →"}
+              {runQuery.isPending ? "Thinking…" : "Ask →"}
             </Button>
           </div>
-          {!isAdmin && canQuery && rateLimit && (
-            <div data-testid="rate-limit-note" className="font-mono text-[10px] text-neutral-600 mt-3">
-              Public demo · up to {rateLimit} questions per minute
-            </div>
-          )}
         </div>
 
         <div className="flex-1 px-8 py-6 overflow-y-auto">

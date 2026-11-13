@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { useAccess } from "@/lib/access";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -44,7 +43,6 @@ export default function EvalDashboard() {
   const [limit, setLimit] = useState(45);
   const [latest, setLatest] = useState(null);
   const qc = useQueryClient();
-  const { isAdmin } = useAccess();
 
   const testsetQ = useQuery({ queryKey: ["testset"], queryFn: api.testset });
   const testsetSize = testsetQ.data?.testset?.length ?? 45;
@@ -136,11 +134,10 @@ export default function EvalDashboard() {
           <Button
             data-testid="run-eval-btn"
             onClick={() => runEval.mutate()}
-            disabled={runEval.isPending || !isAdmin}
-            title={isAdmin ? undefined : "Running evaluations needs the admin key"}
+            disabled={runEval.isPending}
             className="rounded-none bg-white text-black hover:bg-neutral-200 font-mono text-xs uppercase tracking-[0.18em] h-10 px-6"
           >
-            {!isAdmin ? "Admin key required" : runEval.isPending ? "Evaluating…" : "Run evaluation →"}
+            {runEval.isPending ? "Evaluating…" : "Run evaluation →"}
           </Button>
         </div>
       </div>
