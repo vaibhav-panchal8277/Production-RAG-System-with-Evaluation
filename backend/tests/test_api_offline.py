@@ -118,3 +118,66 @@ def test_public_routes_stay_open(app_env, monkeypatch):
     assert client.get("/api/").status_code == 200
     assert client.get("/api/testset").status_code == 200
     assert client.get("/api/documents").status_code == 200
+
+
+# ---------- public demo mode: open /query, rate limited, admin routes still keyed ----------
+@pytest.fixture
+def public_env(app_env, monkeypatch):
+    from rag.rate_limit import SlidingWindowLimiter
+
+    monkeypatch.setattr(server, "API_KEY", "s3cret")
+    monkeypatch.setattr(server, "PUBLIC_QUERY", True)
+    monkeypatch.setattr(server, "_query_limiter", SlidingWindowLimiter(2, 3))
+    return app_env
+
+
+def _ask(client, ip, **headers):
+    return client.post(
+        "/api/query",
+        json={"query": "What is the tenure requirement?"},
+        headers={"X-Forwarded-For": ip, **headers},
+    )
+
+
+def test_public_query_needs_no_key_but_is_rate_limited_per_client(public_env):
+    c = public_env["client"]
+    assert _ask(c, "1.1.1.1").status_code == 200
+    assert _ask(c, "1.1.1.1").status_code == 200
+    r = _ask(c, "1.1.1.1")
+    assert r.status_code == 429
+    assert int(r.headers["Retry-After"]) >= 1
+    # A different visitor still gets through.
+    assert _ask(c, "2.2.2.2").status_code == 200
+
+
+def test_public_query_global_cap_stops_ip_rotation(public_env):
+    c = public_env["client"]
+    codes = [_ask(c, f"10.0.0.{i}").status_code for i in range(5)]
+    assert codes == [200, 200, 200, 429, 429]
+
+
+def test_public_query_key_holder_bypasses_limits(public_env):
+    c = public_env["client"]
+    codes = [_ask(c, "1.1.1.1", **{"X-API-Key": "s3cret"}).status_code for _ in range(5)]
+    assert codes == [200] * 5
+
+
+@pytest.mark.parametrize(
+    "method, path",
+    [
+        ("post", "/api/documents/seed"),
+        ("delete", "/api/documents/remote.md"),
+        ("post", "/api/evaluations/run"),
+        ("get", "/api/conversations"),
+    ],
+)
+def test_public_mode_keeps_admin_and_history_routes_keyed(public_env, method, path):
+    c = public_env["client"]
+    kwargs = {"json": {"scope": "testset", "limit": 1}} if path.endswith("/run") else {}
+    assert getattr(c, method)(path, **kwargs).status_code == 401
+
+
+def test_health_reports_public_mode(public_env, monkeypatch):
+    monkeypatch.setattr(server, "index_stats", dict)
+    d = public_env["client"].get("/api/health").json()
+    assert d["auth_required"] is True and d["public_query"] is True

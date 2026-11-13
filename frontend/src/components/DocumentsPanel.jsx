@@ -1,11 +1,13 @@
 import React, { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useAccess, AdminOnlyNote } from "@/lib/access";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
 export default function DocumentsPanel() {
   const qc = useQueryClient();
+  const { isAdmin } = useAccess();
   const { data, isLoading } = useQuery({
     queryKey: ["documents"],
     queryFn: api.listDocs,
@@ -69,6 +71,13 @@ export default function DocumentsPanel() {
       </div>
 
       {/* Actions */}
+      {!isAdmin ? (
+        <div className="p-8 border-b border-white/10">
+          <AdminOnlyNote>
+            Read-only demo · uploading, seeding and deleting documents need the admin key
+          </AdminOnlyNote>
+        </div>
+      ) : (
       <div className="grid grid-cols-2 border-b border-white/10">
         <div className="p-8 border-r border-white/10">
           <div className="font-mono text-[10px] uppercase tracking-widest text-neutral-500 mb-3">
@@ -103,6 +112,7 @@ export default function DocumentsPanel() {
           </Button>
         </div>
       </div>
+      )}
 
       {/* Table */}
       <div className="p-8">
@@ -160,6 +170,7 @@ export default function DocumentsPanel() {
                     {d.updated_at?.slice(0, 19).replace("T", " ")}
                   </td>
                   <td className="py-3 text-right">
+                    {isAdmin && (
                     <button
                       data-testid={`delete-${d.source}`}
                       onClick={() => del.mutate(d.source)}
@@ -167,6 +178,7 @@ export default function DocumentsPanel() {
                     >
                       Delete
                     </button>
+                    )}
                   </td>
                 </tr>
               ))}

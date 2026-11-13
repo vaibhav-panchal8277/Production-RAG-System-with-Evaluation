@@ -1,11 +1,16 @@
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useAccess, AdminOnlyNote } from "@/lib/access";
 
 export default function HistoryPanel() {
+  const { isAdmin, loaded } = useAccess();
   const { data, isLoading } = useQuery({
     queryKey: ["conversations"],
     queryFn: () => api.listConversations(100),
+    // History holds every visitor's questions; it is admin-only on a public
+    // deployment, so don't fire a request that can only return 401.
+    enabled: loaded && isAdmin,
   });
 
   const exportJson = () => {
@@ -59,7 +64,7 @@ export default function HistoryPanel() {
             retrieve + generate spans.
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className={`flex items-center gap-3 ${isAdmin ? "" : "hidden"}`}>
           <button
             onClick={exportCsv}
             data-testid="export-csv-btn"
@@ -78,7 +83,11 @@ export default function HistoryPanel() {
       </div>
 
       <div className="p-8">
-        {isLoading ? (
+        {loaded && !isAdmin ? (
+          <AdminOnlyNote>
+            Private · query history is only visible with the admin key
+          </AdminOnlyNote>
+        ) : isLoading ? (
           <div className="font-mono text-xs text-neutral-500">loading…</div>
         ) : !data?.conversations?.length ? (
           <div className="font-mono text-xs text-neutral-600 uppercase tracking-widest">
