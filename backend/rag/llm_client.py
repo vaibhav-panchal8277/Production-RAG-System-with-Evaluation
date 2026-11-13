@@ -4,18 +4,25 @@ Groq exposes an OpenAI-compatible REST API, so we keep using the `openai` SDK
 (and `langchain_openai.ChatOpenAI` for RAGAS) and simply point `base_url` at
 Groq. That keeps the rest of the codebase provider-agnostic.
 
-Embeddings are computed locally with sentence-transformers (MiniLM, dim 384)
-because Groq does not serve an embeddings endpoint.
+Embeddings are computed locally (MiniLM, dim 384) because Groq does not serve
+an embeddings endpoint. They run on fastembed's ONNX build of the same model
+rather than sentence-transformers: the vectors are identical (cosine 1.0), but
+not importing PyTorch cuts idle memory by roughly 300 MB, which is what lets the
+API fit a 512 MB free-tier instance.
 """
 import logging
 import os
 import threading
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
+import numpy as np
+from fastembed import TextEmbedding
 from langchain_core.embeddings import Embeddings
-from langchain_openai import ChatOpenAI
 from openai import BadRequestError, OpenAI
-from sentence_transformers import SentenceTransformer
+
+if TYPE_CHECKING:
+    from langchain_openai import ChatOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +118,9 @@ EMBED_MODEL = os.environ.get(
     "EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
 ).strip()
 EMBED_DIM = int(os.environ.get("EMBED_DIM", "384"))
+# Where the ONNX model is cached. The Docker image downloads it at build time
+# into this directory so a cold start never has to fetch it.
+EMBED_CACHE_DIR = os.environ.get("FASTEMBED_CACHE_PATH") or None
 
 # Hard timeout (seconds) for any single LLM HTTP call, so a hung upstream
 # request can never pin a worker indefinitely.
@@ -130,8 +140,14 @@ def get_openai() -> OpenAI:
 
 
 @lru_cache(maxsize=1)
-def get_chat_llm() -> ChatOpenAI:
-    """LangChain chat model pointed at Groq (the RAGAS judge)."""
+def get_chat_llm() -> "ChatOpenAI":
+    """LangChain chat model pointed at Groq (the RAGAS judge).
+
+    langchain_openai is imported here rather than at module load: only an eval
+    run needs it, and the query path should stay light on memory.
+    """
+    from langchain_openai import ChatOpenAI
+
     return ChatOpenAI(
         model=EVAL_LLM_MODEL,
         api_key=GROQ_API_KEY,
@@ -176,22 +192,29 @@ def chat_completion(messages: list[dict], **overrides):
         return client.chat.completions.create(**kwargs)
 
 
-_st_lock = threading.Lock()
-_st_instance: SentenceTransformer | None = None
+_embed_lock = threading.Lock()
+_embed_instance: TextEmbedding | None = None
 
 
-def _st_model() -> SentenceTransformer:
+def _embed_model() -> TextEmbedding:
     """The process-wide MiniLM model, loaded once.
 
     Locked because concurrent first calls (e.g. parallel eval questions right
     after startup) would otherwise each load their own copy.
     """
-    global _st_instance
-    if _st_instance is None:
-        with _st_lock:
-            if _st_instance is None:
-                _st_instance = SentenceTransformer(EMBED_MODEL)
-    return _st_instance
+    global _embed_instance
+    if _embed_instance is None:
+        with _embed_lock:
+            if _embed_instance is None:
+                _embed_instance = TextEmbedding(EMBED_MODEL, cache_dir=EMBED_CACHE_DIR)
+    return _embed_instance
+
+
+def _encode(texts: list[str]) -> np.ndarray:
+    v = np.asarray(list(_embed_model().embed(texts, batch_size=32)), dtype=np.float32)
+    # Cosine index: unit-length vectors, matching what was stored at ingest.
+    norms = np.linalg.norm(v, axis=1, keepdims=True)
+    return v / np.where(norms == 0, 1.0, norms)
 
 
 class SharedEmbeddings(Embeddings):
@@ -214,13 +237,13 @@ def get_embeddings() -> SharedEmbeddings:
 
 
 def embed_text(text: str) -> list[float]:
-    v = _st_model().encode([text], normalize_embeddings=True)[0]
-    return v.tolist()
+    return _encode([text])[0].tolist()
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
-    v = _st_model().encode(list(texts), normalize_embeddings=True, batch_size=32)
-    return [row.tolist() for row in v]
+    if not texts:
+        return []
+    return [row.tolist() for row in _encode(list(texts))]
 
 
 def provider_info() -> dict:

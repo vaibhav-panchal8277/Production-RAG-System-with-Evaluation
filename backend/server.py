@@ -19,6 +19,7 @@ from fastapi import (
     Header,
     HTTPException,
     Query,
+    Request,
     Response,
     UploadFile,
 )
@@ -38,6 +39,7 @@ from rag.ingest import delete_document as remove_document
 from rag.ingest import ingest_document, rebuild_bm25_from_db
 from rag.llm_client import LLM_MODEL, provider_info
 from rag.observability import score_eval_rows, shutdown_tracing, trace_rag
+from rag.rate_limit import SlidingWindowLimiter, client_ip
 from rag.vector_store import (
     VectorStoreError,
     bm25_search,
@@ -68,6 +70,19 @@ MAX_EVAL_SAMPLES = int(os.environ.get("MAX_EVAL_SAMPLES", "100"))
 EVAL_CONCURRENCY = max(1, int(os.environ.get("EVAL_CONCURRENCY", "4")))
 UPLOAD_CHUNK = 1024 * 1024
 
+
+def _env_flag(name: str) -> bool:
+    return (os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Public demo mode: /query is open to anyone (rate limited) while every other
+# protected route still needs X-API-Key. Conversation history stays private
+# because it holds every visitor's questions.
+PUBLIC_QUERY = _env_flag("PUBLIC_QUERY")
+QUERY_RATE_PER_MIN = int(os.environ.get("QUERY_RATE_PER_MIN", "10"))
+QUERY_GLOBAL_RATE_PER_MIN = int(os.environ.get("QUERY_GLOBAL_RATE_PER_MIN", "25"))
+_query_limiter = SlidingWindowLimiter(QUERY_RATE_PER_MIN, QUERY_GLOBAL_RATE_PER_MIN)
+
 _RAW_ORIGINS = os.environ.get("CORS_ORIGINS", "http://localhost:3000").strip()
 CORS_ORIGINS = [o.strip() for o in _RAW_ORIGINS.split(",") if o.strip()]
 # A wildcard origin cannot be combined with credentialed requests (the browser
@@ -92,9 +107,43 @@ async def require_api_key(x_api_key: str | None = Header(default=None)):
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
 
 
+def _has_valid_key(x_api_key: str | None) -> bool:
+    return bool(API_KEY and x_api_key and secrets.compare_digest(x_api_key, API_KEY))
+
+
+async def query_access(request: Request, x_api_key: str | None = Header(default=None)):
+    """Who may call /query.
+
+    Normally the same as require_api_key. With PUBLIC_QUERY on, anyone may, but
+    requests without a valid key are rate limited (per client and globally) so
+    a public demo can't drain the Groq quota.
+    """
+    if not PUBLIC_QUERY:
+        await require_api_key(x_api_key)
+        return
+    if _has_valid_key(x_api_key):
+        return
+    client = client_ip(
+        request.headers.get("x-forwarded-for"),
+        request.client.host if request.client else None,
+    )
+    retry_after = _query_limiter.check(client)
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many questions right now; please wait a moment and try again.",
+            headers={"Retry-After": str(max(1, int(retry_after + 0.999)))},
+        )
+
+
 # ---------- lifespan ----------
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    if PUBLIC_QUERY and not API_KEY:
+        logger.warning(
+            "PUBLIC_QUERY is on but RAG_API_KEY is not set, so upload/delete/eval are "
+            "open too. Set RAG_API_KEY for a public deployment."
+        )
     if not API_KEY:
         logger.warning(
             "RAG_API_KEY is not set — upload/seed/delete, evaluations, query and "
@@ -155,6 +204,8 @@ app.add_middleware(
     allow_origins=CORS_ORIGINS,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "X-API-Key"],
+    # Lets the UI read how long to wait after a 429.
+    expose_headers=["Retry-After"],
 )
 
 
@@ -242,6 +293,8 @@ async def health():
         "llm": provider_info(),
         "guardrails": guardrails_status(),
         "auth_required": bool(API_KEY),
+        "public_query": PUBLIC_QUERY,
+        "query_rate_per_min": QUERY_RATE_PER_MIN if PUBLIC_QUERY else None,
     }
 
 
@@ -326,7 +379,7 @@ async def delete_document(source: str):
 
 
 # ----- query / RAG -----
-@api.post("/query", dependencies=[Depends(require_api_key)])
+@api.post("/query", dependencies=[Depends(query_access)])
 async def query(body: QueryIn):
     t0 = time.time()
     contexts, answer, model, guardrail = await _retrieve_and_generate(

@@ -16,19 +16,6 @@ import logging
 import math
 import os
 
-from datasets import Dataset
-from ragas import evaluate
-from ragas.embeddings import LangchainEmbeddingsWrapper
-from ragas.llms import LangchainLLMWrapper
-from ragas.metrics import (
-    AnswerCorrectness,
-    Faithfulness,
-    LLMContextPrecisionWithoutReference,
-    LLMContextRecall,
-    ResponseRelevancy,
-)
-from ragas.run_config import RunConfig
-
 from rag.eval_metrics import is_out_of_scope, refusal_score, retrieval_scores
 from rag.llm_client import get_chat_llm, get_embeddings
 
@@ -83,6 +70,22 @@ def _resolve_columns(columns: list[str], metrics: tuple[str, ...]) -> dict[str, 
 
 async def _run_ragas(rows: list[dict], with_reference: bool) -> list[dict]:
     """Score `rows` with RAGAS; one {metric: score|None} dict per row."""
+    # Imported on first use, not at module load: RAGAS, datasets and pyarrow add
+    # ~150 MB, and an API that is only answering questions should not pay that
+    # on a 512 MB instance.
+    from datasets import Dataset
+    from ragas import evaluate
+    from ragas.embeddings import LangchainEmbeddingsWrapper
+    from ragas.llms import LangchainLLMWrapper
+    from ragas.metrics import (
+        AnswerCorrectness,
+        Faithfulness,
+        LLMContextPrecisionWithoutReference,
+        LLMContextRecall,
+        ResponseRelevancy,
+    )
+    from ragas.run_config import RunConfig
+
     keys = RAGAS_METRICS if with_reference else REFERENCE_FREE_METRICS
 
     samples = []
