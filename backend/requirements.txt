@@ -14,7 +14,7 @@ pymongo==4.6.3
 # ---------------- RAG stack (LLM served by Groq via its OpenAI-compatible API) ----
 openai==1.99.9
 pinecone==6.0.2
-fastembed==0.9.1           # ONNX MiniLM embeddings (no PyTorch: ~300 MB less RAM)
+sentence-transformers==3.3.1
 rank-bm25==0.2.2
 pypdf==5.1.0
 langfuse==2.60.0

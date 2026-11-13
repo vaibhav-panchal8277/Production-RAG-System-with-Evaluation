@@ -26,11 +26,9 @@ An end-to-end RAG system built to answer the question that most RAG demos dodge:
 | Observe | One Langfuse trace per query (retrieve + generate spans); eval metrics pushed back as trace scores |
 
 **Generation runs on Groq; embeddings run locally.** Groq serves no embeddings
-endpoint, so `sentence-transformers/all-MiniLM-L6-v2` (384-dim) runs in-process
-on fastembed's ONNX runtime. It produces the same vectors as sentence-transformers
-without PyTorch, so the API idles at about 280 MB and fits a 512 MB free-tier
-instance. Outside Docker, the first request downloads the ~90 MB model; the
-Docker image bakes it in.
+endpoint, so `sentence-transformers/all-MiniLM-L6-v2` (384-dim) runs in-process.
+The first request downloads ~90 MB of model weights and is therefore slow; every
+request after that is local and fast.
 
 ---
 
@@ -89,6 +87,8 @@ python3.11 -m venv .venv
 source .venv/bin/activate          # macOS/Linux
 # .venv\Scripts\Activate.ps1       # Windows PowerShell
 
+# CPU-only torch first, so sentence-transformers doesn't pull the CUDA build
+pip install --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
 pip install -r requirements-dev.txt   # runtime deps + pytest/ruff
 uvicorn server:app --host 0.0.0.0 --port 8001 --reload
 ```
@@ -134,8 +134,6 @@ Everything is environment-driven; see `backend/env.example.txt` for the full lis
 | `PINECONE_API_KEY` | *(required)* | Vector store |
 | `PINECONE_NAMESPACE` | *(empty)* | Isolate vectors within a shared index (CI uses one per run) |
 | `RAG_API_KEY` | *(empty)* | When set, `X-API-Key` is required on upload/seed/delete, eval, query and conversation history |
-| `PUBLIC_QUERY` | `false` | Public demo mode: `/query` needs no key but is rate limited; everything else still needs `RAG_API_KEY` |
-| `QUERY_RATE_PER_MIN` / `QUERY_GLOBAL_RATE_PER_MIN` | `10` / `25` | Public `/query` limits per visitor and in total (requests carrying the key are exempt) |
 | `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowlist; avoid `*` |
 | `EVAL_CONCURRENCY` | `4` | Test-set questions answered in parallel during an eval run |
 | `EVAL_RAGAS_WORKERS` | `4` | Parallel RAGAS judge calls (RAGAS default 16 trips rate limits) |
@@ -158,13 +156,6 @@ The backend logs a warning at startup while `RAG_API_KEY` is unset. Both UIs
 send the header automatically — Streamlit reads `RAG_API_KEY`, React reads
 `REACT_APP_RAG_API_KEY` (note that any `REACT_APP_*` value is baked into the
 browser bundle, so treat it as a network-level control, not per-user auth).
-
-### Deploying publicly
-
-[DEPLOY.md](DEPLOY.md) walks through a free deployment: the API on Render, the
-UI on Vercel and MongoDB Atlas, using [render.yaml](render.yaml) and
-[frontend/vercel.json](frontend/vercel.json). It runs in public demo mode, where
-visitors can chat and admin actions need the key.
 
 ---
 
@@ -208,7 +199,7 @@ evaluation response.
 │   ├── server.py              # FastAPI app (all routes under /api)
 │   ├── config/                # NeMo Guardrails (config.yml, rails.co) — optional
 │   ├── rag/
-│   │   ├── llm_client.py      # Groq chat client + shared local MiniLM embeddings (ONNX)
+│   │   ├── llm_client.py      # Groq chat client + shared local MiniLM embeddings
 │   │   ├── chunker.py         # RecursiveCharacterTextSplitter
 │   │   ├── vector_store.py    # Pinecone + BM25 + Reciprocal Rank Fusion
 │   │   ├── generator.py       # grounded prompt with citations
