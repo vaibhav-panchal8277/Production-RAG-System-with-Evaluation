@@ -157,6 +157,11 @@ send the header automatically — Streamlit reads `RAG_API_KEY`, React reads
 `REACT_APP_RAG_API_KEY` (note that any `REACT_APP_*` value is baked into the
 browser bundle, so treat it as a network-level control, not per-user auth).
 
+### Deploying publicly
+
+[DEPLOY.md](DEPLOY.md) covers a free-tier deployment: the API on Google Cloud
+Run, the UI on Vercel and the database on MongoDB Atlas, with no code changes.
+
 ---
 
 ## Docker
