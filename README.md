@@ -13,6 +13,12 @@ An end-to-end RAG system built to answer the question that most RAG demos dodge:
 ![ragas](https://img.shields.io/badge/ragas-0.2-EAB308)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
+**🔗 Live demo: <https://production-rag-system-with-evaluati-nine.vercel.app>**
+
+Try one of the sample questions on the Ask page. The API scales to zero when
+idle, so the first question after a quiet period can take 20–40 seconds; the
+ones after that are fast. Hosting is described in [DEPLOY.md](DEPLOY.md).
+
 ---
 
 ## How it works
@@ -161,6 +167,8 @@ browser bundle, so treat it as a network-level control, not per-user auth).
 
 [DEPLOY.md](DEPLOY.md) covers a free-tier deployment: the API on Google Cloud
 Run, the UI on Vercel and the database on MongoDB Atlas, with no code changes.
+That's how the [live demo](https://production-rag-system-with-evaluati-nine.vercel.app)
+is hosted.
 
 ---
 
