@@ -14,10 +14,11 @@ variable or a console setting.
 
 ## 1. MongoDB Atlas (database)
 
-1. Go to <https://cloud.mongodb.com> and create a free **M0** cluster. Choose
-   **Google Cloud, Iowa (us-central1)** so it sits next to Cloud Run.
-2. **Database Access** → **Add user**. Use a generated password, with role
-   *Read and write to any database*.
+1. Go to <https://cloud.mongodb.com> and create a free **M0** cluster. Pick a
+   region near your Cloud Run region (this guide uses `europe-west1`).
+2. **Database Access** → **Add user**. Click **Autogenerate Secure Password**
+   (letters and digits only, so nothing needs URL-encoding), with role
+   *Read and write to any database*. Never reuse the username as the password.
 3. **Network Access** → **Add IP** → `0.0.0.0/0`. Cloud Run has no fixed
    outbound IP, so the strong password is what protects the database.
 4. **Connect** → **Drivers** → copy the `mongodb+srv://USER:PASSWORD@…`
@@ -45,13 +46,15 @@ variable or a console setting.
    * Connect GitHub and choose `Production-RAG-System-with-Evaluation`,
      branch `^main$`.
    * Build type: **Dockerfile**. Source location: `/backend/Dockerfile`.
-     This makes every push to `main` redeploy the backend.
+   * This creates the service and a Cloud Build trigger. The generated trigger
+     can fail with `lstat /workspace/Dockerfile: no such file or directory`,
+     because it builds from the repo root. Step 8 replaces its build config.
 5. Service settings:
 
    | Setting | Value | Why |
    | --- | --- | --- |
    | Service name | `rag-eval-api` | |
-   | Region | `us-central1` | covered by the free tier |
+   | Region | `europe-west1` | covered by the free tier (`us-central1` also works; change it in the step 9 YAML too) |
    | Authentication | **Allow unauthenticated invocations** | the browser calls it directly |
    | Billing | **Request-based** | free-tier friendly |
    | Min instances | `0` | scales to zero when idle |
@@ -72,16 +75,56 @@ variable or a console setting.
      LLM_MODEL=openai/gpt-oss-120b
      PINECONE_INDEX=rag-eval-index
      PINECONE_NAMESPACE=prod
-     CORS_ORIGINS=https://placeholder.invalid      # replaced in step 4
+     CORS_ORIGINS=https://placeholder.invalid      # replaced in section 4
      EVAL_CONCURRENCY=2
      EVAL_RAGAS_WORKERS=2
      LANGFUSE_PUBLIC_KEY=pk-lf-...                  # optional
      LANGFUSE_HOST=https://us.cloud.langfuse.com    # optional
      ```
 
-7. Click **Create**. The first build takes about 10 minutes. When it's done,
-   copy the service URL (`https://rag-eval-api-….run.app`) and open
-   `<URL>/api/` in a browser. It should return `{"service":"rag-eval","status":"ok"}`.
+7. Click **Create**.
+8. **Grant the build permissions.** Builds run as the default compute service
+   account (`<PROJECT_NUMBER>-compute@developer.gserviceaccount.com`). Without
+   these roles a build fails in about a second with no logs. In **IAM** →
+   that account → **Edit**, add:
+   * Secret Manager Secret Accessor
+   * Cloud Build Service Account
+   * Cloud Run Admin
+   * Service Account User
+   * Logs Writer
+9. **Fix the build trigger.** **Cloud Build** → **Triggers** → the trigger for
+   this repo → **Edit** → Configuration: **Cloud Build configuration file** →
+   Location: **Inline** → paste the YAML below → **Save** → **Run**. It
+   builds `backend/`, pushes to Artifact Registry and rolls out a new
+   revision on every push to `main`. Change `europe-west1` if you used
+   another region.
+
+   ```yaml
+   steps:
+     - id: Build
+       name: gcr.io/cloud-builders/docker
+       dir: backend
+       args: [build, --no-cache, -t, europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/rag-eval-api:$COMMIT_SHA, -f, Dockerfile, .]
+     - id: Push
+       name: gcr.io/cloud-builders/docker
+       args: [push, europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/rag-eval-api:$COMMIT_SHA]
+     - id: Deploy
+       name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+       entrypoint: gcloud
+       args: [run, services, update, rag-eval-api, --platform=managed, --region=europe-west1, --image=europe-west1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/rag-eval-api:$COMMIT_SHA, --quiet]
+   timeout: 1800s
+   options:
+     logging: CLOUD_LOGGING_ONLY
+   ```
+
+   The `cloud-run-source-deploy` repository is created by step 4. If it is
+   missing, create a Docker repository with that name in Artifact Registry
+   in the same region.
+10. The first build takes about 10 minutes. When it's done, copy the service
+    URL (`https://rag-eval-api-….run.app`) and check:
+    * `<URL>/api/` returns `{"service":"rag-eval","status":"ok"}`.
+    * `<URL>/api/health` returns 200 with `mongo_docs` and `pinecone` info.
+      A 500 here almost always means `MONGO_URL` is wrong.
 
 ## 3. Frontend on Vercel
 
@@ -97,22 +140,28 @@ variable or a console setting.
 
    The key is needed because the backend requires it for `/query`. Anything in
    `REACT_APP_*` can be read by visitors in their browser, so treat this key
-   as a demo key: rotate it after interviews (step 5).
+   as a demo key: rotate it after interviews (section 5).
 4. Click **Deploy**, then copy the production URL (`https://….vercel.app`).
 
 ## 4. Connect them and seed the corpus
 
 1. Cloud Run → `rag-eval-api` → **Edit & deploy new revision** → set
    `CORS_ORIGINS` to your exact Vercel production URL → **Deploy**.
-2. Seed the sample corpus once:
+2. Seed the sample corpus once. `read -s` keeps the key off the screen and
+   out of shell history:
 
    ```bash
    API=https://rag-eval-api-xxxx.run.app
-   KEY=<your RAG_API_KEY>
-   curl -fsS -X POST "$API/api/documents/seed" -H "X-API-Key: $KEY"
+   read -rs KEY        # paste RAG_API_KEY, press Enter
+   curl -sS -X POST "$API/api/documents/seed" -H "X-API-Key: $KEY" --max-time 900
+   unset KEY
    ```
 
-3. Open the Vercel URL and ask a question.
+   Afterwards `<URL>/api/health` should show `mongo_docs: 4` and
+   `bm25_chunks: 15`.
+
+3. Open the Vercel URL and ask a question. The first one after an idle
+   period can take 20–40 seconds (cold start).
 
 ## 5. Rotating the key
 
@@ -146,4 +195,9 @@ variable or a console setting.
 | 401 on every question | `REACT_APP_RAG_API_KEY` differs from the secret, or Vercel wasn't redeployed after changing it |
 | 503 or timeouts on first load | Cold start; wait about 30 seconds and retry |
 | Revision fails to start | Check Cloud Run → **Logs**. Usually a missing secret or a wrong `MONGO_URL` |
+| "Permission denied on secret" when deploying | The compute service account lacks *Secret Manager Secret Accessor* (section 2, step 8) |
+| Build fails in about 1 second with no logs | The compute service account lacks the build roles (section 2, step 8) |
+| `lstat /workspace/Dockerfile: no such file or directory` | The trigger builds from the repo root; use the inline YAML (section 2, step 9) |
+| `/api/` works but `/api/health` returns 500 | Atlas rejects `MONGO_URL`: wrong password, or the user lacks read/write. Add a new secret version, then **Edit & deploy new revision** |
+| Secret list says "No secrets found" | The secrets were created in a different project; check the project picker at the top of the console |
 | Answers refuse everything | The corpus isn't seeded in this namespace; run the seed command |
