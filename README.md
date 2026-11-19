@@ -26,6 +26,11 @@ and their scores are on the right, and the sidebar shows live system status.
 
 ![Ask page: a cited answer with the retrieved chunks beside it](docs/screenshots/ask.webp)
 
+**Eval Dashboard** — run RAGAS on the 45-question golden set or your recent
+queries; each metric tile fills in and the trend chart tracks scores across runs.
+
+![Eval Dashboard: RAGAS metric tiles, ready to run an evaluation](docs/screenshots/eval-dashboard.webp)
+
 <table>
   <tr>
     <td width="50%"><b>Corpus</b> — upload documents or seed the sample corpus; each one is chunked, embedded and indexed.</td>
