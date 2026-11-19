@@ -19,6 +19,24 @@ Try one of the sample questions on the Ask page. The API scales to zero when
 idle, so the first question after a quiet period can take 20–40 seconds; the
 ones after that are fast. Hosting is described in [DEPLOY.md](DEPLOY.md).
 
+### Screenshots
+
+**Ask** — a grounded answer with an inline `[1]` citation; the retrieved chunks
+and their scores are on the right, and the sidebar shows live system status.
+
+![Ask page: a cited answer with the retrieved chunks beside it](docs/screenshots/ask.webp)
+
+<table>
+  <tr>
+    <td width="50%"><b>Corpus</b> — upload documents or seed the sample corpus; each one is chunked, embedded and indexed.</td>
+    <td width="50%"><b>History</b> — every query is logged with its answer and latency, and links to its Langfuse trace.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/corpus.webp" alt="Corpus page listing the four indexed sample documents"></td>
+    <td><img src="docs/screenshots/history.webp" alt="History page listing past queries with answers, latency and trace links"></td>
+  </tr>
+</table>
+
 ---
 
 ## How it works
@@ -230,6 +248,7 @@ evaluation response.
 │   ├── requirements-nemo.txt  # optional NeMo Guardrails
 │   └── env.example.txt
 ├── frontend/                  # React 19 + Tailwind + shadcn/ui (craco)
+├── docs/screenshots/          # UI screenshots used in this README
 ├── streamlit_app.py           # alternative Streamlit UI
 ├── requirements-streamlit.txt # Streamlit UI deps (talks to the API over HTTP)
 ├── ruff.toml                  # lint config (CI: ruff check backend streamlit_app.py)
