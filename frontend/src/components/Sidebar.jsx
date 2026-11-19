@@ -13,12 +13,21 @@ const NAV = [
 ];
 
 export default function Sidebar({ active, setActive, controls, setControls }) {
-  const { data: h } = useQuery({
+  const {
+    data: h,
+    isError,
+    failureCount,
+  } = useQuery({
     queryKey: ["health"],
     queryFn: api.health,
     refetchInterval: 8000,
   });
 
+  // Three honest states instead of bare dashes. The API scales to zero, so the
+  // first load after a quiet period is slow (a pending request), not a failure.
+  // A refused or failed request counts as unreachable; the periodic refetch
+  // keeps retrying and flips back to "connected" once the API answers.
+  const apiState = isError || failureCount >= 2 ? "error" : h ? "ok" : "loading";
   const lfOk = h?.langfuse_configured;
 
   return (
@@ -36,39 +45,48 @@ export default function Sidebar({ active, setActive, controls, setControls }) {
         </div>
         {/* Model comes from /health so it can't drift from what the backend runs. */}
         <div className="font-mono text-[10px] text-neutral-500 mt-2">
-          v0.1 · {h?.llm?.model ?? "…"}
+          v0.1 · {h?.llm?.model ?? "loading model…"}
         </div>
       </div>
 
       {/* nav */}
-      <nav className="py-2">
-        {NAV.map((n) => (
-          <button
-            key={n.id}
-            data-testid={`nav-${n.id}`}
-            onClick={() => setActive(n.key)}
-            className={`w-full text-left px-5 py-2.5 font-mono text-xs uppercase tracking-[0.14em] transition-colors border-l-2 ${
-              active === n.key
-                ? "bg-white/[0.04] text-white border-white"
-                : "text-neutral-500 hover:text-white hover:bg-white/[0.02] border-transparent"
-            }`}
-          >
-            {n.label}
-          </button>
-        ))}
+      <nav className="py-2" aria-label="Sections">
+        {NAV.map((n) => {
+          const isActive = active === n.key;
+          return (
+            <button
+              key={n.id}
+              type="button"
+              data-testid={`nav-${n.id}`}
+              aria-current={isActive ? "page" : undefined}
+              onClick={() => setActive(n.key)}
+              className={`w-full text-left px-5 py-2.5 font-mono text-xs uppercase tracking-[0.14em] transition-colors border-l-[3px] ${
+                isActive
+                  ? "bg-white/[0.09] text-white font-bold border-white"
+                  : "text-neutral-500 hover:text-white hover:bg-white/[0.03] border-transparent"
+              }`}
+            >
+              {n.label}
+            </button>
+          );
+        })}
       </nav>
 
       <div className="mx-5 border-t border-white/10 my-3" />
 
       {/* controls */}
-      <div className="px-5 flex flex-col gap-4 flex-1 overflow-y-auto pb-4">
+      <div className="px-5 flex flex-col gap-5 flex-1 overflow-y-auto pb-4">
         <div>
-          <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500 mb-2">
+          <div
+            id="mode-label"
+            className="font-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500 mb-2"
+          >
             Retrieval Mode
           </div>
           <RadioGroup
             value={controls.mode}
             onValueChange={(v) => setControls((c) => ({ ...c, mode: v }))}
+            aria-labelledby="mode-label"
             data-testid="mode-radio-group"
           >
             {["hybrid", "dense", "keyword"].map((m) => (
@@ -91,13 +109,19 @@ export default function Sidebar({ active, setActive, controls, setControls }) {
         </div>
 
         <div>
-          <div className="flex items-baseline justify-between mb-2">
-            <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500">
+          <div className="flex items-baseline justify-between">
+            <div
+              id="top-k-label"
+              className="font-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500"
+            >
               Top-K
             </div>
             <div className="font-mono text-sm text-white" data-testid="top-k-value">
               {controls.topK}
             </div>
+          </div>
+          <div id="top-k-help" className="text-[11px] text-neutral-500 mt-0.5 mb-1">
+            Chunks retrieved per question
           </div>
           <Slider
             data-testid="top-k-slider"
@@ -106,30 +130,69 @@ export default function Sidebar({ active, setActive, controls, setControls }) {
             step={1}
             value={[controls.topK]}
             onValueChange={([v]) => setControls((c) => ({ ...c, topK: v }))}
-            className="slider-sharp"
+            thumbLabel="Top-K: chunks retrieved per question"
+            aria-describedby="top-k-help"
           />
         </div>
 
-        <div className="mt-2">
-          <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500 mb-3">
+        <div className="mt-1">
+          <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500 mb-2">
             Live System
           </div>
-          <StatRow label="vectors" value={h?.pinecone?.total_vectors ?? "—"} />
-          <StatRow label="documents" value={h?.mongo_docs ?? "—"} />
-          <StatRow label="queries" value={h?.mongo_conversations ?? "—"} />
-          <StatRow label="pinecone dim" value={h?.pinecone?.dimension ?? "—"} />
-          <div className="flex items-center justify-between py-1">
-            <div className="font-mono text-xs text-neutral-500">langfuse</div>
-            <div className="flex items-center gap-2">
-              <span
-                className={`status-dot ${lfOk ? "" : "err"}`}
-                data-testid="langfuse-status-dot"
-              />
-              <span className="font-mono text-xs text-neutral-300">
-                {lfOk ? "connected" : "off"}
-              </span>
-            </div>
+
+          <div
+            className="flex items-center gap-2 py-1"
+            role="status"
+            aria-live="polite"
+            data-testid="api-status"
+          >
+            <span
+              className={`status-dot ${
+                apiState === "ok" ? "" : apiState === "loading" ? "warn" : "err"
+              }`}
+              aria-hidden="true"
+            />
+            <span className="font-mono text-xs text-neutral-200">
+              {apiState === "ok"
+                ? "API connected"
+                : apiState === "loading"
+                  ? "Connecting to API…"
+                  : "API unavailable"}
+            </span>
           </div>
+
+          {apiState === "loading" && (
+            <p className="text-[11px] leading-snug text-neutral-500 mt-1">
+              The API sleeps when idle. The first load can take about 30 seconds.
+            </p>
+          )}
+          {apiState === "error" && (
+            <p className="text-[11px] leading-snug text-neutral-500 mt-1">
+              Can't reach the API right now. Retrying automatically.
+            </p>
+          )}
+
+          {apiState === "ok" && (
+            <dl className="mt-1">
+              <StatRow label="Vectors indexed" value={h.pinecone?.total_vectors} />
+              <StatRow label="Documents" value={h.mongo_docs} />
+              <StatRow label="Queries logged" value={h.mongo_conversations} />
+              <StatRow label="Embedding dim" value={h.pinecone?.dimension} />
+              <div className="flex items-center justify-between py-1">
+                <dt className="font-mono text-xs text-neutral-500">Tracing</dt>
+                <dd className="flex items-center gap-2 m-0">
+                  <span
+                    className={`status-dot ${lfOk ? "" : "warn"}`}
+                    data-testid="langfuse-status-dot"
+                    aria-hidden="true"
+                  />
+                  <span className="font-mono text-xs text-neutral-300">
+                    {lfOk ? "Connected" : "Not configured"}
+                  </span>
+                </dd>
+              </div>
+            </dl>
+          )}
         </div>
       </div>
 
@@ -142,10 +205,17 @@ export default function Sidebar({ active, setActive, controls, setControls }) {
 }
 
 function StatRow({ label, value }) {
+  const missing = value === null || value === undefined;
   return (
     <div className="flex items-center justify-between py-1">
-      <div className="font-mono text-xs text-neutral-500">{label}</div>
-      <div className="font-mono text-xs text-white tabular-nums">{value}</div>
+      <dt className="font-mono text-xs text-neutral-500">{label}</dt>
+      <dd
+        className={`font-mono text-xs tabular-nums m-0 ${
+          missing ? "text-neutral-600" : "text-white"
+        }`}
+      >
+        {missing ? "n/a" : value}
+      </dd>
     </div>
   );
 }

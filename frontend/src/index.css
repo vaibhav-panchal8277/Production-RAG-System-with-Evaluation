@@ -111,11 +111,6 @@ body,
     color: #fff;
 }
 
-/* Slider — sharp square thumb */
-.slider-sharp [data-orientation="horizontal"] {
-    height: 2px;
-}
-
 /* Citation marker */
 .citation-marker {
     display: inline-block;

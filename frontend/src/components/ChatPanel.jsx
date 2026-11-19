@@ -1,15 +1,15 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import CitedText from "@/components/CitedText";
-import { toast } from "sonner";
 
 export default function ChatPanel({ controls }) {
   const [query, setQuery] = useState("");
   const [result, setResult] = useState(null);
   const [activeChunk, setActiveChunk] = useState(null);
+  const inputRef = useRef(null);
   const qc = useQueryClient();
 
   const runQuery = useMutation({
@@ -20,10 +20,8 @@ export default function ChatPanel({ controls }) {
       qc.invalidateQueries({ queryKey: ["health"] });
       qc.invalidateQueries({ queryKey: ["conversations"] });
     },
-    onError: (e) => {
-      const msg = e?.response?.data?.detail || e.message || "Query failed";
-      toast.error(msg);
-    },
+    // Errors are shown inline under the Ask button (role="alert"), so screen
+    // readers announce them and they stay next to the field that caused them.
   });
 
   const suggestions = useMemo(
@@ -37,8 +35,17 @@ export default function ChatPanel({ controls }) {
   );
 
   const submit = () => {
-    if (!query.trim()) return;
+    if (!query.trim() || runQuery.isPending) return;
     runQuery.mutate(query.trim());
+  };
+
+  const errorMessage = runQuery.isError
+    ? runQuery.error?.response?.data?.detail || runQuery.error?.message || "Query failed"
+    : null;
+
+  const pickSuggestion = (s) => {
+    setQuery(s);
+    inputRef.current?.focus();
   };
 
   return (
@@ -59,42 +66,96 @@ export default function ChatPanel({ controls }) {
           </div>
         </div>
 
-        <div className="px-8 py-5 border-b border-white/10">
+        <form
+          className="px-8 py-5 border-b border-white/10"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit();
+          }}
+          aria-label="Ask a question"
+        >
+          {/* Examples sit above the box so the Ask button stays right under it. */}
+          <div
+            id="suggestions-label"
+            className="font-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500 mb-2"
+          >
+            Try an example
+          </div>
+          <div
+            className="flex flex-wrap gap-2 mb-4"
+            role="group"
+            aria-labelledby="suggestions-label"
+          >
+            {suggestions.map((s, i) => (
+              <button
+                key={i}
+                type="button"
+                data-testid={`suggestion-${i}`}
+                onClick={() => pickSuggestion(s)}
+                title={s}
+                className="text-xs px-3 py-1.5 rounded-full bg-white/[0.07] text-neutral-300 hover:bg-white/[0.16] hover:text-white focus-visible:bg-white/[0.16] transition-colors max-w-full truncate"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+
+          <label
+            htmlFor="query-input"
+            className="block font-mono text-[10px] uppercase tracking-[0.14em] text-neutral-500 mb-2"
+          >
+            Your question
+          </label>
           <Textarea
+            id="query-input"
+            ref={inputRef}
             data-testid="query-input"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
+            onChange={(e) => {
+              setQuery(e.target.value);
+              if (runQuery.isError) runQuery.reset();
             }}
-            placeholder="Type your question. ⌘/Ctrl + Enter to submit."
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            placeholder="Ask something about the documents in the corpus…"
+            aria-describedby={errorMessage ? "query-hint query-error" : "query-hint"}
+            aria-invalid={errorMessage ? true : undefined}
             className="min-h-[96px] bg-[#111114] border border-white/10 text-white rounded-none font-body focus:border-white/40 focus:ring-0 resize-none"
           />
-          <div className="flex flex-wrap items-center justify-between gap-3 mt-3">
-            <div className="flex flex-wrap gap-2">
-              {suggestions.map((s, i) => (
-                <button
-                  key={i}
-                  data-testid={`suggestion-${i}`}
-                  onClick={() => setQuery(s)}
-                  className="font-mono text-[11px] uppercase tracking-wider px-2 py-1 border border-white/10 text-neutral-400 hover:border-white hover:text-white transition-colors"
-                >
-                  {s.slice(0, 42) + (s.length > 42 ? "…" : "")}
-                </button>
-              ))}
+          <div className="flex items-center justify-between gap-3 mt-3">
+            <div id="query-hint" className="font-mono text-[11px] text-neutral-500">
+              ⌘/Ctrl + Enter to submit
             </div>
             <Button
+              type="submit"
               data-testid="ask-button"
-              onClick={submit}
               disabled={runQuery.isPending || !query.trim()}
               className="rounded-none bg-white text-black hover:bg-neutral-200 font-mono text-xs uppercase tracking-[0.18em] px-6 h-10"
             >
               {runQuery.isPending ? "Thinking…" : "Ask →"}
             </Button>
           </div>
-        </div>
+          {errorMessage && (
+            <div
+              id="query-error"
+              role="alert"
+              data-testid="query-error"
+              className="mt-3 border-l-2 border-red-500 pl-3 text-sm text-red-300"
+            >
+              {String(errorMessage)}
+            </div>
+          )}
+        </form>
 
-        <div className="flex-1 px-8 py-6 overflow-y-auto">
+        <div
+          className="flex-1 px-8 py-6 overflow-y-auto"
+          aria-live="polite"
+          aria-busy={runQuery.isPending}
+        >
           {runQuery.isPending && (
             <div className="font-mono text-xs text-neutral-500 animate-pulse">
               retrieving · generating · logging trace…
@@ -145,8 +206,12 @@ export default function ChatPanel({ controls }) {
           <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-neutral-500">
             Retrieved context
           </div>
-          <div className="font-heading text-xl font-bold text-white mt-2">
-            {result ? `${result.contexts.length} chunks` : "—"}
+          <div
+            className={`font-heading text-xl font-bold mt-2 ${
+              result ? "text-white" : "text-neutral-600"
+            }`}
+          >
+            {result ? `${result.contexts.length} chunks` : "None yet"}
           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-3">
