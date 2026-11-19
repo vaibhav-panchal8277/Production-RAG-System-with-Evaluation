@@ -73,6 +73,7 @@ variable or a console setting.
      ```
      DB_NAME=rag_eval
      LLM_MODEL=openai/gpt-oss-120b
+     EVAL_LLM_MODEL=openai/gpt-oss-20b             # RAGAS judge; has its own Groq quota
      PINECONE_INDEX=rag-eval-index
      PINECONE_NAMESPACE=prod
      CORS_ORIGINS=https://placeholder.invalid      # replaced in section 4
@@ -177,10 +178,16 @@ variable or a console setting.
   question downloads and loads MiniLM. Requests after that are fast.
 * **Evaluations.** On request-based billing, Cloud Run only gives the container
   CPU while a request is in flight. The UI polls a running eval every few
-  seconds, so evals do progress, but slowly. Keep evals small (limit 3–5).
-  Setting **Billing: instance-based** makes them run at full speed, but uses
-  up free-tier credit faster. A full 45-question run can also exceed Groq's
-  free daily token limit.
+  seconds, so evals do progress, but slowly: a 5-question run took about
+  11 minutes, so a full 45-question run takes well over an hour. Keep evals
+  small (limit 3–5), or run full ones locally. Setting **Billing:
+  instance-based** makes them run at full speed, but uses up free-tier credit
+  faster.
+* **Judge quota.** Grading makes roughly 10 LLM calls per question, and Groq
+  counts quota per model. Setting `EVAL_LLM_MODEL` to a different model than
+  `LLM_MODEL` (the live demo grades with `openai/gpt-oss-20b`) means evals
+  can't use up the quota the demo's answers depend on. A full 45-question run
+  can still exceed the judge model's free daily token limit.
 * **Previews.** CORS allows only the production Vercel URL, so Vercel preview
   deployments can't call the API. That's intended.
 * **Data.** Atlas keeps conversations and eval history, and Pinecone keeps the
@@ -201,3 +208,5 @@ variable or a console setting.
 | `/api/` works but `/api/health` returns 500 | Atlas rejects `MONGO_URL`: wrong password, or the user lacks read/write. Add a new secret version, then **Edit & deploy new revision** |
 | Secret list says "No secrets found" | The secrets were created in a different project; check the project picker at the top of the console |
 | Answers refuse everything | The corpus isn't seeded in this namespace; run the seed command |
+| An eval shows "Evaluating…" for a long time | Normal on request-based billing (see above). The job keeps running on the server; when it finishes it appears in the dashboard's run history. A new revision deploy cancels it |
+| Answers fail with rate-limit errors after an eval | The judge used the same Groq quota as the answers; set `EVAL_LLM_MODEL` to a different model |

@@ -157,7 +157,7 @@ Everything is environment-driven; see `backend/env.example.txt` for the full lis
 | `LLM_MODEL` | `openai/gpt-oss-120b` | Any chat model your Groq account can access |
 | `LLM_REASONING_FORMAT` | `hidden` | Reasoning models only: keeps chain-of-thought out of the answer (`include_reasoning=false` on gpt-oss). Blank to omit |
 | `LLM_REASONING_EFFORT` | *(unset)* | Reasoning models only: `low`, `medium` or `high` |
-| `EVAL_LLM_MODEL` | *(= `LLM_MODEL`)* | RAGAS judge model; use a different model to avoid self-grading bias |
+| `EVAL_LLM_MODEL` | *(= `LLM_MODEL`)* | RAGAS judge model. Use a different model to reduce self-grading bias and to give grading its own Groq rate-limit quota (the live demo uses `openai/gpt-oss-20b`) |
 | `GROQ_API_BASE` | `https://api.groq.com/openai/v1` | Override to proxy or to use another OpenAI-compatible provider |
 | `LLM_TIMEOUT_S` | `60` | Per-request timeout, so a hung provider can't pin a worker |
 | `PINECONE_API_KEY` | *(required)* | Vector store |
